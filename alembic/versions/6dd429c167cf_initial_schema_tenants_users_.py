@@ -167,16 +167,16 @@ def upgrade() -> None:
     # ---------------------------------------------------------------------------
     op.execute("""
         CREATE TABLE storefronts (
-            id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            tenant_id   UUID NOT NULL REFERENCES tenants(id)
-                ON DELETE CASCADE,
-            slug        TEXT NOT NULL,
-            name        TEXT NOT NULL,
-            domain      TEXT,
-            status      TEXT NOT NULL DEFAULT 'active',
-            created_at  TIMESTAMPTZ DEFAULT NOW(),
-            updated_at  TIMESTAMPTZ DEFAULT NOW(),
-            UNIQUE (tenant_id, slug)
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+            slug TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            domain TEXT,
+            status TEXT NOT NULL DEFAULT 'active',
+            design_config JSONB,               -- drag-and-drop layout, components, AI-generated config
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE (tenant_id, name)
         );
     """)
 
@@ -185,21 +185,51 @@ def upgrade() -> None:
     # ---------------------------------------------------------------------------
     op.execute("""
         CREATE TABLE products (
-            id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            storefront_id   UUID NOT NULL REFERENCES storefronts(id)
-                ON DELETE CASCADE,
-            tenant_id       UUID NOT NULL REFERENCES tenants(id)
-                ON DELETE CASCADE,
-            name            TEXT NOT NULL,
-            price           NUMERIC(12,2) NOT NULL,
-            description     TEXT,
-            created_at      TIMESTAMPTZ DEFAULT NOW(),
-            updated_at      TIMESTAMPTZ DEFAULT NOW()
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+            type TEXT NOT NULL CHECK (type IN ('simple', 'variable')),  -- simple or variable
+            name TEXT NOT NULL,
+            description TEXT,
+            base_price NUMERIC(12,2),
+            sku TEXT UNIQUE,                   -- global SKU for simple products
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
         );
     """)
 
     # ---------------------------------------------------------------------------
-    # 12. Others
+    # 12. Storefront ↔ Products membership (many-to-many)
+    # ---------------------------------------------------------------------------
+    op.execute("""
+        CREATE TABLE storefront_products (
+            storefront_id UUID NOT NULL REFERENCES storefronts(id) ON DELETE CASCADE,
+            product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+            display_order INT DEFAULT 0,       -- for sorting in storefront
+            is_visible BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (storefront_id, product_id)
+        );
+    """)
+
+    # ---------------------------------------------------------------------------
+    # 13. Products Variants
+    # ---------------------------------------------------------------------------
+    op.execute("""
+        CREATE TABLE product_variants (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+            sku TEXT UNIQUE,                   -- variant-specific SKU
+            price NUMERIC(12,2),               -- override base price
+            stock_quantity INTEGER DEFAULT 0,
+            re_order_level INTEGER DEFAULT 0,
+            attributes JSONB,                  -- e.g. {"size": "M", "color": "blue"}
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+    """)
+
+    # ---------------------------------------------------------------------------
+    # 14. Others
     # ---------------------------------------------------------------------------
     op.execute("""
         -- Enforce only one root user per tenant (or globally if tenant_id IS NULL)
@@ -219,6 +249,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
+    op.execute("DROP TABLE IF EXISTS storefront_products CASCADE;")
+    op.execute("DROP TABLE IF EXISTS product_variants CASCADE;")
     op.execute("DROP TABLE IF EXISTS products CASCADE;")
     op.execute("DROP TABLE IF EXISTS storefronts CASCADE;")
     op.execute("DROP TABLE IF EXISTS role_permissions CASCADE;")

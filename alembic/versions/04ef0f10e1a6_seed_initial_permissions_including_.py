@@ -33,11 +33,30 @@ def upgrade() -> None:
             ('users:delete', 'Delete Users', 'users', 'delete', 'Soft-delete users'),
             ('tenants:manage', 'Tenant Administration', 'tenants', 'manage', 'Full tenant control'),
             ('products:*', 'Product Administration', 'products', '*', 'Full product lifecycle management'),
-            ('storefronts:*', 'Storefront Administration', 'storefronts', '*', 'Full storefront configuration and management')
+            ('storefronts:*', 'Storefront Administration', 'storefronts', '*', 'Full storefront configuration and management'),
+            ('permissions:grant', 'Grant Permissions', 'permissions', 'grant', 'Grant permissions to an entity'),
+            ('permissions:revoke', 'Revoke Permissions', 'permissions', 'revoke', 'Revoke permissions from an entity'),
+            ('permissions:list', 'List Permissions', 'permissions', 'list', 'List permissions for an entity that is not itself')
         ON CONFLICT (code) DO NOTHING;
         """)
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    pass
+    op.execute("""
+        -- Remove seeded permission-management permissions.
+        DELETE FROM permissions
+        WHERE code IN (
+            '*',
+            'users:create',
+            'users:read',
+            'users:update',
+            'users:delete',
+            'tenants:manage',
+            'products:*',
+            'storefronts:*',
+            'permissions:grant',
+            'permissions:revoke',
+            'permissions:list'
+        );
+    """)

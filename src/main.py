@@ -4,9 +4,10 @@ from fastapi import Depends, FastAPI
 from sqlalchemy import text
 
 from src.auth.router import auth_router
-from src.core.dependencies import get_db
+from src.core.dependencies import get_current_user, get_db
 from src.database.engine import engine
 from src.permissions.router import permissions_router
+from src.storefronts.router import storefront_router
 from src.users.router import user_router
 
 
@@ -41,6 +42,8 @@ app.include_router(user_router, dependencies=[Depends(get_db)])
 app.include_router(auth_router, dependencies=[Depends(get_db)])
 # Permissions routes
 app.include_router(permissions_router, dependencies=[Depends(get_db)])
+# Storefront routes
+app.include_router(storefront_router, dependencies=[Depends(get_db)])
 
 
 @app.get("/health")
