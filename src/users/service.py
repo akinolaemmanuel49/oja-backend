@@ -86,9 +86,9 @@ async def create_user_service(
             "tenant": {...}  # only if a new tenant was created
         }
     """
-    hashed_pw = hash_password(user_in.password)
-
     try:
+        hashed_pw = hash_password(user_in.password)
+
         new_tenant_id: Optional[str] = None
 
         # Explicit initialization for static analysis

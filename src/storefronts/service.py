@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.storefronts.schemas import StorefrontCreate, StorefrontUpdate
@@ -22,22 +23,32 @@ async def create_storefront_service(
         RETURNING id, tenant_id, name, slug, domain, status, created_at, updated_at
     """)
 
-    result = await db.execute(
-        query,
-        {
-            "tenant_id": tenant_id,
-            "name": data.name,
-            "slug": data.slug,
-            "domain": data.domain,
-            "status": data.status,
-        },
-    )
+    try:
+        result = await db.execute(
+            query,
+            {
+                "tenant_id": tenant_id,
+                "name": data.name,
+                "slug": data.slug,
+                "domain": data.domain,
+                "status": data.status,
+            },
+        )
 
-    row = result.mappings().first()
-    if not row:
-        raise RuntimeError("Failed to create storefront")
+        row = result.mappings().first()
+        if not row:
+            raise RuntimeError("Failed to create storefront")
 
-    return dict(row)
+        return dict(row)
+    except IntegrityError as e:
+        if "storefronts_slug_key" in str(e):
+            raise ValueError("Storefront slug already taken")
+        elif "storefronts_tenant_id_name_key" in str(e):
+            raise ValueError("Storefront name already taken")
+        raise ValueError("Database constraint violation") from e
+    except Exception as e:
+        await db.rollback()
+        raise RuntimeError(f"Failed to create storefront: {str(e)}") from e
 
 
 async def get_storefront_service(
@@ -79,35 +90,45 @@ async def update_storefront_service(
     db: AsyncSession, storefront_id: str, tenant_id: str, data: StorefrontUpdate
 ) -> Optional[Dict[str, Any]]:
     """Update an existing storefront (tenant-scoped)."""
-    if not any([data.name, data.slug, data.domain, data.status]):
-        return None
+    try:
+        if not any([data.name, data.slug, data.domain, data.status]):
+            return None
 
-    updates = []
-    params = {"id": storefront_id, "tenant_id": tenant_id}
+        updates = []
+        params = {"id": storefront_id, "tenant_id": tenant_id}
 
-    if data.name is not None:
-        updates.append("name = :name")
-        params["name"] = data.name
-    if data.slug is not None:
-        updates.append("slug = :slug")
-        params["slug"] = data.slug
-    if data.domain is not None:
-        updates.append("domain = :domain")
-        params["domain"] = data.domain
-    if data.status is not None:
-        updates.append("status = :status")
-        params["status"] = data.status
+        if data.name is not None:
+            updates.append("name = :name")
+            params["name"] = data.name
+        if data.slug is not None:
+            updates.append("slug = :slug")
+            params["slug"] = data.slug
+        if data.domain is not None:
+            updates.append("domain = :domain")
+            params["domain"] = data.domain
+        if data.status is not None:
+            updates.append("status = :status")
+            params["status"] = data.status
 
-    query = text(f"""
-        UPDATE storefronts
-        SET {", ".join(updates)}, updated_at = NOW()
-        WHERE id = :id AND tenant_id = :tenant_id
-        RETURNING id, tenant_id, name, slug, domain, status, created_at, updated_at
-    """)
+        query = text(f"""
+            UPDATE storefronts
+            SET {", ".join(updates)}, updated_at = NOW()
+            WHERE id = :id AND tenant_id = :tenant_id
+            RETURNING id, tenant_id, name, slug, domain, status, created_at, updated_at
+        """)
 
-    result = await db.execute(query, params)
-    row = result.mappings().first()
-    return dict(row) if row else None
+        result = await db.execute(query, params)
+        row = result.mappings().first()
+        return dict(row) if row else None
+    except IntegrityError as e:
+        if "storefronts_slug_key" in str(e):
+            raise ValueError("Storefront slug already taken")
+        elif "storefronts_tenant_id_name_key" in str(e):
+            raise ValueError("Storefront name already taken")
+        raise ValueError("Database constraint violation") from e
+    except Exception as e:
+        await db.rollback()
+        raise RuntimeError(f"Failed to update storefront: {str(e)}") from e
 
 
 async def delete_storefront_service(

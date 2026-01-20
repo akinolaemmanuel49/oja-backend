@@ -24,12 +24,17 @@ async def create_storefront(
     current_user: dict = Depends(require_permission("storefronts:create")),
     db: AsyncSession = Depends(get_db),
 ):
-    tenant_id = current_user.get("tenant_id")
-    if not tenant_id:
-        raise HTTPException(403, "No tenant associated with user")
+    try:
+        tenant_id = current_user.get("tenant_id")
+        if not tenant_id:
+            raise HTTPException(403, "No tenant associated with user")
 
-    result = await create_storefront_service(db, tenant_id, data)
-    return result
+        result = await create_storefront_service(db, tenant_id, data)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError:
+        raise HTTPException(status_code=500, detail="Failed to create storefront")
 
 
 @storefront_router.get("/{storefront_id}", response_model=StorefrontOut)
@@ -69,16 +74,21 @@ async def update_storefront(
     current_user: dict = Depends(require_permission("storefronts:update")),
     db: AsyncSession = Depends(get_db),
 ):
-    tenant_id = current_user.get("tenant_id")
-    if not tenant_id:
-        raise HTTPException(403, "No tenant associated with user")
+    try:
+        tenant_id = current_user.get("tenant_id")
+        if not tenant_id:
+            raise HTTPException(403, "No tenant associated with user")
 
-    result = await update_storefront_service(db, storefront_id, tenant_id, data)
-    if not result:
-        raise HTTPException(
-            status_code=404, detail="Storefront not found or no changes"
-        )
-    return result
+        result = await update_storefront_service(db, storefront_id, tenant_id, data)
+        if not result:
+            raise HTTPException(
+                status_code=404, detail="Storefront not found or no changes"
+            )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError:
+        raise HTTPException(status_code=500, detail="Failed to update storefront")
 
 
 @storefront_router.delete("/{storefront_id}", status_code=status.HTTP_204_NO_CONTENT)

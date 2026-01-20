@@ -55,9 +55,10 @@ async def integrity_error_handler(request: Request, exc: IntegrityError):
         detail = "Resource already exists"
         if "users_email_key" in str(original_exc):
             detail = "Email address already registered"
-        elif "tenants_slug_key" in str(original_exc):
+        elif "storefronts_slug_key" in str(original_exc):
             detail = "Storefront slug already taken"
-        # Add more specific cases as needed
+        elif "storefronts_tenant_id_name_key" in str(original_exc):
+            detail = "Storefront name already taken"
 
         logger.warning(
             f"Integrity error: {detail} | User: {request.user} | Path: {request.url.path}",
