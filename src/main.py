@@ -1,7 +1,12 @@
+import logging
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from asyncpg.exceptions import ForeignKeyViolationError, UniqueViolationError
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.auth.router import auth_router
 from src.core.dependencies import get_db
@@ -33,6 +38,52 @@ app = FastAPI(
     },
     lifespan=lifespan,
 )
+
+# Logger (colored output via Uvicorn)
+logger = logging.getLogger(__name__)
+
+
+# Custom exception handler
+@app.exception_handler(IntegrityError)
+async def integrity_error_handler(request: Request, exc: IntegrityError):
+    original_exc = exc.orig
+    if isinstance(original_exc, ForeignKeyViolationError):
+        detail = "Resource not found"
+        if "user_permissions_user_id_fkey" in str(original_exc):
+            detail = "User or permission does not exist"
+    elif isinstance(original_exc, UniqueViolationError):
+        detail = "Resource already exists"
+        if "users_email_key" in str(original_exc):
+            detail = "Email address already registered"
+        elif "tenants_slug_key" in str(original_exc):
+            detail = "Storefront slug already taken"
+        # Add more specific cases as needed
+
+        logger.warning(
+            f"Integrity error: {detail} | User: {request.user} | Path: {request.url.path}",
+            extra={"error": str(exc), "params": exc.params},
+        )
+
+        return JSONResponse(status_code=409, content={"detail": detail})
+
+    logger.error(f"Database integrity error: {str(exc)}", exc_info=True)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    logger.warning(f"HTTP error {exc.status_code}: {exc.detail}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=exc.headers if exc.headers else {},
+    )
+
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    logger.exception(f"Unhandled exception: {str(exc)}")
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 # Register routes

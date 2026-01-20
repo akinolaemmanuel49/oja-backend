@@ -1,6 +1,7 @@
 from typing import Any, Dict, Optional
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.security import hash_password
@@ -175,9 +176,13 @@ async def create_user_service(
 
         return result
 
+    except IntegrityError as e:
+        if "users_email_key" in str(e):
+            raise ValueError("Email already registered")
+        raise ValueError("Database constraint violation") from e
     except Exception as e:
-        await db.rollback()  # Rollback on error
-        raise RuntimeError(f"User creation failed: {e}") from e
+        await db.rollback()
+        raise RuntimeError(f"User creation failed: {str(e)}") from e
 
 
 async def get_user_by_id_service(user_id: str, db: AsyncSession) -> Dict[str, Any]:

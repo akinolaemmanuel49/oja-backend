@@ -29,12 +29,20 @@ async def grant_new_permission(
     _=Depends(require_permission("permissions:grant")),
 ):
     """Grant a permission to a user, group, or role."""
-    success = await grant_single_permission(
-        db,
-        target_type=request.target_type,
-        target_id=request.target_id,
-        permission_code=request.permission_code,
-    )
+    try:
+        success = await grant_single_permission(
+            db,
+            target_type=request.target_type,
+            target_id=request.target_id,
+            permission_code=request.permission_code,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to grant permission (invalid code or target)",
+        )
     if not success:
         raise HTTPException(
             status_code=400,
@@ -58,12 +66,20 @@ async def grant_new_permissions_bulk(
             status_code=400, detail="At least one permission code required"
         )
 
-    success_count = await grant_multiple_permissions(
-        db=db,
-        target_type=request.target_type,
-        target_id=request.target_id,
-        permission_codes=request.permission_codes,
-    )
+    try:
+        success_count = await grant_multiple_permissions(
+            db=db,
+            target_type=request.target_type,
+            target_id=request.target_id,
+            permission_codes=request.permission_codes,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to grant permission (invalid code or target)",
+        )
 
     if success_count == 0:
         raise HTTPException(
@@ -85,12 +101,20 @@ async def revoke_permission(
     _=Depends(require_permission("permissions:revoke")),
 ):
     """Revoke a permission from a user, group, or role."""
-    success = await revoke_single_permission(
-        db,
-        target_type=request.target_type,
-        target_id=request.target_id,
-        permission_code=request.permission_code,
-    )
+    try:
+        success = await revoke_single_permission(
+            db,
+            target_type=request.target_type,
+            target_id=request.target_id,
+            permission_code=request.permission_code,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to revoke permission (invalid code or target)",
+        )
     if not success:
         raise HTTPException(
             status_code=400,
@@ -114,12 +138,20 @@ async def revoke_permissions_bulk(
             status_code=400, detail="At least one permission code required"
         )
 
-    success_count = await revoke_multiple_permissions(
-        db=db,
-        target_type=request.target_type,
-        target_id=request.target_id,
-        permission_codes=request.permission_codes,
-    )
+    try:
+        success_count = await revoke_multiple_permissions(
+            db=db,
+            target_type=request.target_type,
+            target_id=request.target_id,
+            permission_codes=request.permission_codes,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to revoke permission (invalid code or target)",
+        )
 
     if success_count == 0:
         raise HTTPException(

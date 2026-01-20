@@ -16,8 +16,10 @@ async def create_root_user(
     try:
         result = await create_user_service(db, user_in, is_root=True, tenant_id=None)
         return result["user"]
-    except RuntimeError as e:
+    except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError:
+        raise HTTPException(status_code=500, detail="Failed to create user")
 
 
 @user_router.post("/", response_model=UserOut, status_code=201)
@@ -36,8 +38,10 @@ async def create_regular_user(
             db, user_in, is_root=False, tenant_id=tenant_id
         )
         return result["user"]
-    except RuntimeError as e:
+    except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError:
+        raise HTTPException(status_code=500, detail="Failed to create user")
 
 
 @user_router.get("/{user_id}", response_model=UserOut, status_code=200)
