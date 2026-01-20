@@ -4,7 +4,7 @@ from fastapi import Depends, FastAPI
 from sqlalchemy import text
 
 from src.auth.router import auth_router
-from src.core.dependencies import get_current_user, get_db
+from src.core.dependencies import get_db
 from src.database.engine import engine
 from src.permissions.router import permissions_router
 from src.storefronts.router import storefront_router

@@ -53,17 +53,24 @@ UPDATE_TENANT_QUERY = text("""
     WHERE id = :tenant_id
 """)
 
-READ_USER_QUERY = text("""
+READ_USER_QUERY_BY_ID = text("""
      SELECT id, email, first_name, last_name, full_name, tenant_id, is_active, is_root, created_at, updated_at
      FROM users
      WHERE id = :user_id
  """)
 
+READ_USER_QUERY_BY_EMAIL = text("""
+     SELECT id, email, first_name, last_name, full_name, tenant_id, is_active, is_root, created_at, updated_at
+     FROM users
+     WHERE email = :email
+ """)
 
-async def create_user(
+
+async def create_user_service(
     db: AsyncSession,
     user_in: UserCreate,
     is_root: bool = False,
+    tenant_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Create a new user with hashed password.
@@ -81,7 +88,6 @@ async def create_user(
     hashed_pw = hash_password(user_in.password)
 
     try:
-        tenant_id: Optional[str] = user_in.tenant_id
         new_tenant_id: Optional[str] = None
 
         # Explicit initialization for static analysis
@@ -174,11 +180,24 @@ async def create_user(
         raise RuntimeError(f"User creation failed: {e}") from e
 
 
-async def read_user(user_id: str, db: AsyncSession) -> Dict[str, Any]:
-    user_result = await db.execute(READ_USER_QUERY, {"user_id": user_id})
+async def get_user_by_id_service(user_id: str, db: AsyncSession) -> Dict[str, Any]:
+    user_result = await db.execute(READ_USER_QUERY_BY_ID, {"user_id": user_id})
     user_row = user_result.mappings().first()
     if not user_row:
         raise ValueError(f"User not found: {user_id}")
+
+    result: Dict[str, Any] = {
+        "user": dict(user_row),
+    }
+
+    return result
+
+
+async def get_user_by_email_service(email: str, db: AsyncSession) -> Dict[str, Any]:
+    user_result = await db.execute(READ_USER_QUERY_BY_EMAIL, {"email": email})
+    user_row = user_result.mappings().first()
+    if not user_row:
+        raise ValueError(f"User not found: {email}")
 
     result: Dict[str, Any] = {
         "user": dict(user_row),

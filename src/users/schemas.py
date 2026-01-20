@@ -7,10 +7,9 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 class UserCreate(BaseModel):
     email: EmailStr
-    password: str = Field(..., min_length=8)
+    password: str = Field(..., min_length=6)
     first_name: str
     last_name: str
-    tenant_id: Optional[str] = None
 
 
 class UserOut(BaseModel):

@@ -1,22 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from sqlalchemy import text
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.schemas import Login
+from src.auth.service import login_service
 from src.core.dependencies import get_current_user, get_db
-from src.core.security import verify_password
 from src.core.session import create_session, destroy_session
 from src.users.schemas import UserOut
-from src.users.service import read_user
+from src.users.service import get_user_by_id_service
 
 auth_router = APIRouter(prefix="/auth", tags=["Authentication"])
-
-GET_USER_QUERY = text("""
-SELECT id, password_hash, deleted_at
-FROM users
-WHERE email = :email
-LIMIT 1
-""")
 
 
 @auth_router.post("/login")
@@ -26,19 +18,7 @@ async def login(
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(GET_USER_QUERY, {"email": login_data.email})
-
-    user = result.mappings().first()
-
-    if not user or not verify_password(login_data.password, user["password_hash"]):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
-        )
-
-    if user["deleted_at"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="User is deleted"
-        )
+    user = await login_service(db, login_data.email, login_data.password)
 
     await create_session(db, str(user["id"]), request, response)
     return {"message": "Logged in successfully"}
@@ -58,5 +38,5 @@ async def me(
     db: AsyncSession = Depends(get_db),
 ):
     current_user_id = current_user["user_id"]
-    result = await read_user(current_user_id, db)
+    result = await get_user_by_id_service(current_user_id, db)
     return result["user"]

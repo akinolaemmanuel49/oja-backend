@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.storefronts.schemas import StorefrontCreate, StorefrontUpdate
 
 
-async def create_storefront(
+async def create_storefront_service(
     db: AsyncSession, tenant_id: str, data: StorefrontCreate
 ) -> Dict[str, Any]:
     """Create a new storefront for a tenant."""
@@ -40,7 +40,7 @@ async def create_storefront(
     return dict(row)
 
 
-async def get_storefront(
+async def get_storefront_service(
     db: AsyncSession, storefront_id: str, tenant_id: str
 ) -> Optional[Dict[str, Any]]:
     """Retrieve a single storefront (tenant-scoped)."""
@@ -57,7 +57,7 @@ async def get_storefront(
     return dict(row) if row else None
 
 
-async def list_storefronts(
+async def list_storefronts_service(
     db: AsyncSession, tenant_id: str, limit: int = 20, offset: int = 0
 ) -> List[Dict[str, Any]]:
     """List all storefronts for a tenant."""
@@ -75,7 +75,7 @@ async def list_storefronts(
     return [dict(row) for row in result.mappings()]
 
 
-async def update_storefront(
+async def update_storefront_service(
     db: AsyncSession, storefront_id: str, tenant_id: str, data: StorefrontUpdate
 ) -> Optional[Dict[str, Any]]:
     """Update an existing storefront (tenant-scoped)."""
@@ -110,7 +110,7 @@ async def update_storefront(
     return dict(row) if row else None
 
 
-async def delete_storefront(
+async def delete_storefront_service(
     db: AsyncSession, storefront_id: str, tenant_id: str
 ) -> bool:
     """Soft-delete a storefront by setting status='deleted'."""
