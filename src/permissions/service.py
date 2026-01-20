@@ -57,12 +57,14 @@ async def has_permission(db: AsyncSession, user_id: str, required_code: str) -> 
     return False
 
 
-async def grant_permission(
+async def grant_single_permission(
     db: AsyncSession,
     target_type: str,  # "user", "group", "role"
     target_id: str,
     permission_code: str,
-) -> bool:
+) -> (
+    bool
+):  # Possibly return error messages here; This might lead to better error messages
     """
     Assign a permission to a user/group/role.
     Returns True if granted, False if already exists or invalid.
@@ -74,6 +76,14 @@ async def grant_permission(
     perm_id = perm_result.scalar()
     if not perm_id:
         return False
+
+    # Prevent modifying permissions for root users
+    if target_type == "user":
+        query = text("SELECT id, is_root FROM users WHERE id=:target_id")
+        result = await db.execute(query, {"target_id": target_id})
+        user = result.first()
+        if user and user.is_root:
+            return False
 
     table_map = {
         "user": ("user_permissions", "user_id"),
@@ -98,7 +108,7 @@ async def grant_permission(
     return True
 
 
-async def grant_permissions_bulk(
+async def grant_multiple_permissions(
     db: AsyncSession, target_type: str, target_id: str, permission_codes: List[str]
 ) -> int:
     """
@@ -110,6 +120,14 @@ async def grant_permissions_bulk(
         "group": ("group_permissions", "group_id"),
         "role": ("role_permissions", "role_id"),
     }
+
+    # Prevent modifying permissions for root users
+    if target_type == "user":
+        query = text("SELECT id, is_root FROM users WHERE id=:target_id")
+        result = await db.execute(query, {"target_id": target_id})
+        user = result.first()
+        if user and user.is_root:
+            return False
 
     if target_type not in table_map:
         return 0
@@ -127,22 +145,125 @@ async def grant_permissions_bulk(
         return 0
 
     granted = 0
-    async with db.begin():
-        for code in permission_codes:
-            perm_id = valid_permissions.get(code)
-            if not perm_id:
-                continue
 
-            await db.execute(
-                text(f"""
-                INSERT INTO {table_name} ({id_column}, permission_id, created_at)
-                VALUES (:target_id, :perm_id, NOW())
-                ON CONFLICT DO NOTHING
-            """),
-                {"target_id": target_id, "perm_id": perm_id},
-            )
-            granted += 1
+    for code in permission_codes:
+        perm_id = valid_permissions.get(code)
+        if not perm_id:
+            continue
 
-        await db.commit()
+        await db.execute(
+            text(f"""
+            INSERT INTO {table_name} ({id_column}, permission_id, created_at)
+            VALUES (:target_id, :perm_id, NOW())
+            ON CONFLICT DO NOTHING
+        """),
+            {"target_id": target_id, "perm_id": perm_id},
+        )
+        granted += 1
+
+    await db.commit()
+
+    return granted
+
+
+async def revoke_single_permission(
+    db: AsyncSession,
+    target_type: str,  # "user", "group", "role"
+    target_id: str,
+    permission_code: str,
+) -> bool:
+    """
+    Revoke a permission from a user/group/role.
+    Returns True if revoked, False if not found or invalid.
+    """
+    # Find permission ID
+    perm_result = await db.execute(
+        text("SELECT id FROM permissions WHERE code = :code"), {"code": permission_code}
+    )
+    perm_id = perm_result.scalar()
+    if not perm_id:
+        return False
+
+    # Prevent modifying permissions for root users
+    if target_type == "user":
+        query = text("SELECT id, is_root FROM users WHERE id=:target_id")
+        result = await db.execute(query, {"target_id": target_id})
+        user = result.first()
+        if user and user.is_root:
+            return False
+
+    table_map = {
+        "user": ("user_permissions", "user_id"),
+        "group": ("group_permissions", "group_id"),
+        "role": ("role_permissions", "role_id"),
+    }
+    if target_type not in table_map:
+        return False
+
+    table, id_col = table_map[target_type]
+
+    await db.execute(
+        text(f"""
+        DELETE FROM {table} WHERE {id_col} = :target_id AND permission_id = :perm_id
+    """),
+        {"target_id": target_id, "perm_id": perm_id},
+    )
+
+    await db.commit()
+    return True
+
+
+async def revoke_multiple_permissions(
+    db: AsyncSession, target_type: str, target_id: str, permission_codes: List[str]
+) -> int:
+    """
+    Revoke permissions from target.
+    Returns number of successfully revoked permissions.
+    """
+    table_map = {
+        "user": ("user_permissions", "user_id"),
+        "group": ("group_permissions", "group_id"),
+        "role": ("role_permissions", "role_id"),
+    }
+
+    # Prevent modifying permissions for root users
+    if target_type == "user":
+        query = text("SELECT id, is_root FROM users WHERE id=:target_id")
+        result = await db.execute(query, {"target_id": target_id})
+        user = result.first()
+        if user and user.is_root:
+            return False
+
+    if target_type not in table_map:
+        return 0
+
+    table_name, id_column = table_map[target_type]
+
+    # Fetch valid permission IDs in bulk
+    result = await db.execute(
+        text("SELECT id, code FROM permissions WHERE code = ANY(:codes)"),
+        {"codes": permission_codes},
+    )
+    valid_permissions = {row["code"]: row["id"] for row in result.mappings()}
+
+    if not valid_permissions:
+        return 0
+
+    granted = 0
+
+    for code in permission_codes:
+        perm_id = valid_permissions.get(code)
+        if not perm_id:
+            continue
+
+        await db.execute(
+            text(f"""
+            DELETE FROM {table_name} WHERE {id_column} = :target_id AND permission_id = :perm_id
+        """),
+            {"target_id": target_id, "perm_id": perm_id},
+        )
+        granted += 1
+
+    await db.commit()
 
     return granted

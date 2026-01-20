@@ -2,11 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.dependencies import get_current_user, get_db, require_permission
-from src.permissions.schemas import GrantPermissionRequest, GrantPermissionsRequest
+from src.permissions.schemas import PermissionRequest, PermissionsRequest
 from src.permissions.service import (
-    grant_permission,
-    grant_permissions_bulk,
+    grant_multiple_permissions,
+    grant_single_permission,
     list_user_permissions,
+    revoke_multiple_permissions,
+    revoke_single_permission,
 )
 
 permissions_router = APIRouter(prefix="/permissions", tags=["Permissions"])
@@ -22,12 +24,12 @@ async def list_my_permissions(
 
 @permissions_router.post("/grant", status_code=status.HTTP_200_OK)
 async def grant_new_permission(
-    request: GrantPermissionRequest,
+    request: PermissionRequest,
     db: AsyncSession = Depends(get_db),
     _=Depends(require_permission("permissions:grant")),
 ):
     """Grant a permission to a user, group, or role."""
-    success = await grant_permission(
+    success = await grant_single_permission(
         db,
         target_type=request.target_type,
         target_id=request.target_id,
@@ -42,8 +44,8 @@ async def grant_new_permission(
 
 
 @permissions_router.post("/grant/bulk", status_code=status.HTTP_200_OK)
-async def grant_permissions_bulk_endpoint(
-    request: GrantPermissionsRequest,
+async def grant_new_permissions_bulk(
+    request: PermissionsRequest,
     db: AsyncSession = Depends(get_db),
     _=Depends(require_permission("permissions:grant")),
 ):
@@ -56,7 +58,7 @@ async def grant_permissions_bulk_endpoint(
             status_code=400, detail="At least one permission code required"
         )
 
-    success_count = await grant_permissions_bulk(
+    success_count = await grant_multiple_permissions(
         db=db,
         target_type=request.target_type,
         target_id=request.target_id,
@@ -71,6 +73,62 @@ async def grant_permissions_bulk_endpoint(
 
     return {
         "message": f"Successfully granted {success_count} permission(s)",
+        "granted": success_count,
+        "requested": len(request.permission_codes),
+    }
+
+
+@permissions_router.post("/revoke", status_code=status.HTTP_200_OK)
+async def revoke_permission(
+    request: PermissionRequest,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_permission("permissions:revoke")),
+):
+    """Revoke a permission from a user, group, or role."""
+    success = await revoke_single_permission(
+        db,
+        target_type=request.target_type,
+        target_id=request.target_id,
+        permission_code=request.permission_code,
+    )
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail="Failed to revoke permission (invalid code or target)",
+        )
+    return {"message": "Permission revoked"}
+
+
+@permissions_router.post("/revoke/bulk", status_code=status.HTTP_200_OK)
+async def revoke_permissions_bulk(
+    request: PermissionsRequest,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_permission("permissions:revoke")),
+):
+    """
+    Grant multiple permissions to a target (user, group, or role) in one request.
+    All assignments are atomic (transaction).
+    """
+    if not request.permission_codes:
+        raise HTTPException(
+            status_code=400, detail="At least one permission code required"
+        )
+
+    success_count = await revoke_multiple_permissions(
+        db=db,
+        target_type=request.target_type,
+        target_id=request.target_id,
+        permission_codes=request.permission_codes,
+    )
+
+    if success_count == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid permissions revoked (invalid codes or target)",
+        )
+
+    return {
+        "message": f"Successfully revoked {success_count} permission(s)",
         "granted": success_count,
         "requested": len(request.permission_codes),
     }
