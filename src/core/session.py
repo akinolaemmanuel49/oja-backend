@@ -77,7 +77,13 @@ async def get_current_session(db: AsyncSession, request: Request) -> Optional[di
         await db.commit()
         return None
 
-    return {"user_id": str(row["user_id"])}
+    query = text("SELECT tenant_id FROM users WHERE id = :user_id")
+    result = await db.execute(query, {"user_id": row["user_id"]})
+    user_row = result.mappings().first()
+    if not user_row:
+        return None
+
+    return {"user_id": str(row["user_id"]), "tenant_id": str(user_row["tenant_id"])}
 
 
 async def destroy_session(

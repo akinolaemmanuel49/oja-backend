@@ -80,82 +80,98 @@ async def create_user(
     """
     hashed_pw = hash_password(user_in.password)
 
-    async with db.begin():  # atomic transaction
-        try:
-            tenant_id: Optional[str] = user_in.tenant_id
-            new_tenant_id: Optional[str] = None
+    try:
+        tenant_id: Optional[str] = user_in.tenant_id
+        new_tenant_id: Optional[str] = None
 
-            # Explicit initialization for static analysis
-            slug: Optional[str] = None
-            name: Optional[str] = None
+        # Explicit initialization for static analysis
+        slug: Optional[str] = None
+        name: Optional[str] = None
 
-            # Root user case: create tenant first
-            if is_root and tenant_id is None:
-                slug = generate_random_string(
-                    pattern="XXXX-XXXX-XXXX",
-                    chars=ALPHANUMERIC_LOWER,
-                )
-                name = generate_random_string(
-                    pattern="Tenant-XXXXXX",
-                    chars=ALPHANUMERIC,
-                )
+        # Root user case: create tenant first
+        if is_root and tenant_id is None:
+            slug = generate_random_string(
+                pattern="XXXX-XXXX-XXXX",
+                chars=ALPHANUMERIC_LOWER,
+            )
+            name = generate_random_string(
+                pattern="Tenant-XXXXXX",
+                chars=ALPHANUMERIC,
+            )
 
-                tenant_result = await db.execute(
-                    INSERT_TENANT_QUERY,
-                    {"slug": slug, "name": name},
-                )
-                tenant_row = tenant_result.mappings().first()
-                if not tenant_row:
-                    raise RuntimeError("Failed to create root tenant")
+            tenant_result = await db.execute(
+                INSERT_TENANT_QUERY,
+                {"slug": slug, "name": name},
+            )
+            tenant_row = tenant_result.mappings().first()
+            if not tenant_row:
+                raise RuntimeError("Failed to create root tenant")
 
-                new_tenant_id = str(tenant_row["id"])
-                tenant_id = new_tenant_id
+            new_tenant_id = str(tenant_row["id"])
+            tenant_id = new_tenant_id
 
-            # Create user
-            user_result = await db.execute(
-                INSERT_USER_QUERY,
+        # Create user
+        user_result = await db.execute(
+            INSERT_USER_QUERY,
+            {
+                "email": user_in.email,
+                "password_hash": hashed_pw,
+                "first_name": user_in.first_name,
+                "last_name": user_in.last_name,
+                "full_name": f"{user_in.first_name} {user_in.last_name}".strip(),
+                "tenant_id": tenant_id,
+                "is_root": is_root,
+            },
+        )
+
+        user_row = user_result.mappings().first()
+        if not user_row:
+            raise RuntimeError("Failed to create user")
+
+        new_user_id = user_row["id"]
+
+        if is_root:
+            # Assign existing wildcard permission
+            await db.execute(
+                text("""
+                INSERT INTO user_permissions (user_id, permission_id, created_at)
+                SELECT :user_id, p.id, NOW()
+                FROM permissions p
+                WHERE p.code = '*'
+                ON CONFLICT DO NOTHING;
+            """),
+                {"user_id": new_user_id},
+            )
+
+        # If we created a tenant, set its owner
+        if new_tenant_id is not None:
+            await db.execute(
+                UPDATE_TENANT_QUERY,
                 {
-                    "email": user_in.email,
-                    "password_hash": hashed_pw,
-                    "first_name": user_in.first_name,
-                    "last_name": user_in.last_name,
-                    "full_name": f"{user_in.first_name} {user_in.last_name}".strip(),
-                    "tenant_id": tenant_id,
-                    "is_root": is_root,
+                    "owner_id": new_user_id,
+                    "tenant_id": new_tenant_id,
                 },
             )
-            user_row = user_result.mappings().first()
-            if not user_row:
-                raise RuntimeError("Failed to create user")
 
-            new_user_id = user_row["id"]
+        await db.commit()  # Explicitly commit the transaction
 
-            # If we created a tenant, set its owner
-            if new_tenant_id is not None:
-                await db.execute(
-                    UPDATE_TENANT_QUERY,
-                    {
-                        "owner_id": new_user_id,
-                        "tenant_id": new_tenant_id,
-                    },
-                )
+        result: Dict[str, Any] = {
+            "user": dict(user_row),
+        }
 
-            result: Dict[str, Any] = {
-                "user": dict(user_row),
+        # Include tenant info only if a tenant was actually created
+        if new_tenant_id is not None:
+            result["tenant"] = {
+                "id": tenant_id,
+                "slug": slug,
+                "name": name,
             }
 
-            # Include tenant info only if a tenant was actually created
-            if new_tenant_id is not None:
-                result["tenant"] = {
-                    "id": tenant_id,
-                    "slug": slug,
-                    "name": name,
-                }
+        return result
 
-            return result
-
-        except Exception as e:
-            raise RuntimeError(f"User creation failed: {e}") from e
+    except Exception as e:
+        await db.rollback()  # Rollback on error
+        raise RuntimeError(f"User creation failed: {e}") from e
 
 
 async def read_user(user_id: str, db: AsyncSession) -> Dict[str, Any]:
