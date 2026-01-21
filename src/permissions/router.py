@@ -24,7 +24,7 @@ async def list_my_permissions(
 
 
 @permissions_router.post("/grant", status_code=status.HTTP_200_OK)
-async def grant_new_permission(
+async def grant_permission(
     request: PermissionRequest,
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -42,6 +42,7 @@ async def grant_new_permission(
         destination_id=destination_id,
         destination_type=destination_type,
     )
+
     if not is_valid:
         raise HTTPException(status_code=403, detail="Permission denied")
     try:
@@ -67,7 +68,7 @@ async def grant_new_permission(
 
 
 @permissions_router.post("/grant/bulk", status_code=status.HTTP_200_OK)
-async def grant_new_permissions_bulk(
+async def grant_permissions_bulk(
     request: PermissionsRequest,
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),

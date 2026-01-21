@@ -67,7 +67,6 @@ async def get_current_session(db: AsyncSession, request: Request) -> Optional[di
         GET_SESSION_QUERY,
         {"token": token},
     )
-
     row = result.mappings().first()
     if not row:
         return None
@@ -77,13 +76,28 @@ async def get_current_session(db: AsyncSession, request: Request) -> Optional[di
         await db.commit()
         return None
 
-    query = text("SELECT tenant_id FROM users WHERE id = :user_id")
+    user_id = str(row["user_id"])
+    query = text("""
+        SELECT id, tenant_id, is_root
+        FROM users
+        WHERE id = :user_id
+        LIMIT 1
+    """)
     result = await db.execute(query, {"user_id": row["user_id"]})
     user_row = result.mappings().first()
     if not user_row:
         return None
 
-    return {"user_id": str(row["user_id"]), "tenant_id": str(user_row["tenant_id"])}
+    # Get values for session variables
+    tenant_id = str(user_row["tenant_id"]) if user_row["tenant_id"] else ""
+    is_root = str(user_row["is_root"]).lower()
+
+    # Set session variables for RLS - using string interpolation for SET commands
+    await db.execute(text(f"SET LOCAL app.current_user_id = '{user_id}'"))
+    await db.execute(text(f"SET LOCAL app.current_tenant_id = '{tenant_id}'"))
+    await db.execute(text(f"SET LOCAL app.is_root = '{is_root}'"))
+
+    return {"user_id": user_id, "tenant_id": tenant_id, "is_root": is_root}
 
 
 async def destroy_session(
