@@ -13,7 +13,7 @@ from src.storefronts.service import (
     update_storefront_service,
 )
 
-storefront_router = APIRouter(prefix="/storefronts", tags=["Storefronts"])
+storefront_router = APIRouter(prefix="/storefronts", tags=["Storefronts - Management"])
 
 
 @storefront_router.post(
