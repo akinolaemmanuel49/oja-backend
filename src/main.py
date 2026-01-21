@@ -1,4 +1,3 @@
-import logging
 from contextlib import asynccontextmanager
 
 from asyncpg.exceptions import ForeignKeyViolationError, UniqueViolationError
@@ -37,10 +36,14 @@ app = FastAPI(
         "url": "https://opensource.org/licenses/MIT",
     },
     lifespan=lifespan,
+    responses={
+        400: {"description": "Bad request"},
+        401: {"description": "Unauthorized"},
+        403: {"description": "Forbidden"},
+        404: {"description": "Not found"},
+        500: {"description": "Internal server error"},
+    },
 )
-
-# Logger (colored output via Uvicorn)
-logger = logging.getLogger(__name__)
 
 
 # Custom exception handler
@@ -60,20 +63,22 @@ async def integrity_error_handler(request: Request, exc: IntegrityError):
         elif "storefronts_tenant_id_name_key" in str(original_exc):
             detail = "Storefront name already taken"
 
-        logger.warning(
-            f"Integrity error: {detail} | User: {request.user} | Path: {request.url.path}",
-            extra={"error": str(exc), "params": exc.params},
-        )
-
         return JSONResponse(status_code=409, content={"detail": detail})
 
-    logger.error(f"Database integrity error: {str(exc)}", exc_info=True)
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError):
+    if "Invalid credentials" in str(exc):
+        return JSONResponse(status_code=401, content={"detail": "Invalid credentials"})
+    elif "User is deleted" in str(exc):
+        return JSONResponse(status_code=404, content={"detail": "User not found"})
+    return JSONResponse(status_code=400, content={"detail": "Bad request"})
 
 
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
-    logger.warning(f"HTTP error {exc.status_code}: {exc.detail}")
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail},
@@ -83,7 +88,6 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
-    logger.exception(f"Unhandled exception: {str(exc)}")
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 

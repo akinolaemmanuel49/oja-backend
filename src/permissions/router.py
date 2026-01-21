@@ -9,6 +9,7 @@ from src.permissions.service import (
     list_user_permissions,
     revoke_multiple_permissions,
     revoke_single_permission,
+    tenancy_check,
 )
 
 permissions_router = APIRouter(prefix="/permissions", tags=["Permissions"])
@@ -25,10 +26,24 @@ async def list_my_permissions(
 @permissions_router.post("/grant", status_code=status.HTTP_200_OK)
 async def grant_new_permission(
     request: PermissionRequest,
+    current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _=Depends(require_permission("permissions:grant")),
 ):
     """Grant a permission to a user, group, or role."""
+    origin_id = current_user["user_id"]
+    origin_type = "user"
+    destination_id = request.target_id
+    destination_type = request.target_type
+    is_valid = await tenancy_check(
+        db,
+        origin_id=origin_id,
+        origin_type=origin_type,
+        destination_id=destination_id,
+        destination_type=destination_type,
+    )
+    if not is_valid:
+        raise HTTPException(status_code=403, detail="Permission denied")
     try:
         success = await grant_single_permission(
             db,
@@ -54,6 +69,7 @@ async def grant_new_permission(
 @permissions_router.post("/grant/bulk", status_code=status.HTTP_200_OK)
 async def grant_new_permissions_bulk(
     request: PermissionsRequest,
+    current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _=Depends(require_permission("permissions:grant")),
 ):
@@ -65,6 +81,20 @@ async def grant_new_permissions_bulk(
         raise HTTPException(
             status_code=400, detail="At least one permission code required"
         )
+
+    origin_id = current_user["user_id"]
+    origin_type = "user"
+    destination_id = request.target_id
+    destination_type = request.target_type
+    is_valid = await tenancy_check(
+        db,
+        origin_id=origin_id,
+        origin_type=origin_type,
+        destination_id=destination_id,
+        destination_type=destination_type,
+    )
+    if not is_valid:
+        raise HTTPException(status_code=403, detail="Permission denied")
 
     try:
         success_count = await grant_multiple_permissions(
@@ -97,9 +127,23 @@ async def grant_new_permissions_bulk(
 @permissions_router.post("/revoke", status_code=status.HTTP_200_OK)
 async def revoke_permission(
     request: PermissionRequest,
+    current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _=Depends(require_permission("permissions:revoke")),
 ):
+    origin_id = current_user["user_id"]
+    origin_type = "user"
+    destination_id = request.target_id
+    destination_type = request.target_type
+    is_valid = await tenancy_check(
+        db,
+        origin_id=origin_id,
+        origin_type=origin_type,
+        destination_id=destination_id,
+        destination_type=destination_type,
+    )
+    if not is_valid:
+        raise HTTPException(status_code=403, detail="Permission denied")
     """Revoke a permission from a user, group, or role."""
     try:
         success = await revoke_single_permission(
@@ -126,6 +170,7 @@ async def revoke_permission(
 @permissions_router.post("/revoke/bulk", status_code=status.HTTP_200_OK)
 async def revoke_permissions_bulk(
     request: PermissionsRequest,
+    current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _=Depends(require_permission("permissions:revoke")),
 ):
@@ -137,6 +182,20 @@ async def revoke_permissions_bulk(
         raise HTTPException(
             status_code=400, detail="At least one permission code required"
         )
+
+    origin_id = current_user["user_id"]
+    origin_type = "user"
+    destination_id = request.target_id
+    destination_type = request.target_type
+    is_valid = await tenancy_check(
+        db,
+        origin_id=origin_id,
+        origin_type=origin_type,
+        destination_id=destination_id,
+        destination_type=destination_type,
+    )
+    if not is_valid:
+        raise HTTPException(status_code=403, detail="Permission denied")
 
     try:
         success_count = await revoke_multiple_permissions(

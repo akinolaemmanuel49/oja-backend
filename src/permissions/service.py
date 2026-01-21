@@ -58,6 +58,46 @@ async def has_permission(db: AsyncSession, user_id: str, required_code: str) -> 
     return False
 
 
+async def tenancy_check(
+    db: AsyncSession, origin_id, origin_type, destination_id, destination_type
+):
+    """
+    Check whether the origin and destination are in the same tenant.
+    """
+    match origin_type:
+        case "user":
+            origin_table = "users"
+        case "group":
+            origin_table = "groups"
+        case "role":
+            origin_table = "roles"
+        case _:
+            raise ValueError("Invalid origin type")
+
+    match destination_type:
+        case "user":
+            destination_table = "users"
+        case "group":
+            destination_table = "groups"
+        case "role":
+            destination_table = "roles"
+        case _:
+            raise ValueError("Invalid destination type")
+
+    origin_entity = await db.execute(
+        text(f"SELECT tenant_id FROM {origin_table} WHERE id = :id"), {"id": origin_id}
+    )
+    destination_entity = await db.execute(
+        text(f"SELECT tenant_id FROM {destination_table} WHERE id = :id"),
+        {"id": destination_id},
+    )
+
+    origin_tenant_id = origin_entity.scalar_one()
+    destination_tenant_id = destination_entity.scalar_one()
+
+    return origin_tenant_id == destination_tenant_id
+
+
 async def grant_single_permission(
     db: AsyncSession,
     target_type: str,  # "user", "group", "role"
