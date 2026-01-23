@@ -20,6 +20,7 @@ class UserOut(BaseModel):
     full_name: Optional[str]
     is_active: bool
     tenant_id: Optional[UUID]
+    is_root: Optional[bool]
     created_at: datetime
 
     model_config = ConfigDict(

@@ -4,10 +4,11 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.responses import PaginatedResponse
 from src.core.security import hash_password
 from src.core.utils import ALPHANUMERIC, ALPHANUMERIC_LOWER, generate_random_string
 from src.permissions.service import list_user_permissions
-from src.users.schemas import UserCreate
+from src.users.schemas import UserCreate, UserOut
 
 INSERT_TENANT_QUERY = text("""
     INSERT INTO tenants (slug, name, status, created_at, updated_at)
@@ -45,6 +46,7 @@ INSERT_USER_QUERY = text("""
         last_name,
         full_name,
         is_active,
+        is_root,
         tenant_id,
         created_at
 """)
@@ -66,6 +68,21 @@ READ_USER_QUERY_BY_EMAIL = text("""
      FROM users
      WHERE email = :email
  """)
+
+READ_USERS_QUERY_BY_TENANT_ID = text("""
+    SELECT id, email, first_name, last_name, full_name, tenant_id,
+           is_active, is_root, created_at, updated_at
+    FROM users
+    WHERE tenant_id = :tenant_id
+    ORDER BY created_at DESC
+    LIMIT :limit OFFSET :offset
+""")
+
+COUNT_USERS_QUERY_BY_TENANT_ID = text("""
+    SELECT COUNT(*)
+    FROM users
+    WHERE tenant_id = :tenant_id
+""")
 
 
 async def create_user_service(
@@ -213,3 +230,39 @@ async def get_user_by_email_service(email: str, db: AsyncSession) -> Dict[str, A
     }
 
     return result
+
+
+async def get_users_service(
+    tenant_id: str,
+    db: AsyncSession,
+    page: int = 1,
+    page_size: int = 20,
+) -> PaginatedResponse:
+    offset = (page - 1) * page_size
+
+    # Fetch users
+    users_result = await db.execute(
+        READ_USERS_QUERY_BY_TENANT_ID,
+        {
+            "tenant_id": tenant_id,
+            "limit": page_size,
+            "offset": offset,
+        },
+    )
+
+    user_rows = users_result.mappings().all()
+    users = [UserOut(**row) for row in user_rows]
+
+    # Fetch total count
+    count_result = await db.execute(
+        COUNT_USERS_QUERY_BY_TENANT_ID,
+        {"tenant_id": tenant_id},
+    )
+    total = count_result.scalar_one()
+
+    return PaginatedResponse[UserOut](
+        data=users,
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
