@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
@@ -21,6 +21,16 @@ class UserOut(BaseModel):
     is_active: bool
     tenant_id: Optional[UUID]
     created_at: datetime
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        arbitrary_types_allowed=True,
+    )
+
+
+class UserWithPermissions(BaseModel):
+    user: UserOut
+    permissions: List[str]
 
     model_config = ConfigDict(
         from_attributes=True,

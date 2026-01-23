@@ -5,7 +5,7 @@ from src.auth.schemas import Login
 from src.auth.service import login_service
 from src.core.dependencies import get_current_user, get_db
 from src.core.session import create_session, destroy_session
-from src.users.schemas import UserOut
+from src.users.schemas import UserWithPermissions
 from src.users.service import get_user_by_id_service
 
 auth_router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -32,11 +32,32 @@ async def logout(
     return {"message": "Logged out"}
 
 
-@auth_router.get("/me", response_model=UserOut)
+@auth_router.get("/me", response_model=UserWithPermissions)
 async def me(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     current_user_id = current_user["user_id"]
     result = await get_user_by_id_service(current_user_id, db)
-    return result["user"]
+    user = result["user"]
+    permissions = result["permissions"]
+
+    return UserWithPermissions(user=user, permissions=permissions)
+
+
+@auth_router.get("/test-cookies")
+async def test_cookies(request: Request):
+    """Debug endpoint to check if cookies are being sent"""
+    cookies = dict(request.cookies)
+    headers = {
+        k: v
+        for k, v in request.headers.items()
+        if k.lower() in ["cookie", "origin", "referer"]
+    }
+
+    return {
+        "message": "Cookie test",
+        "cookies_received": cookies,
+        "relevant_headers": headers,
+        # "session_cookie_found": SESSION_COOKIE in cookies,
+    }

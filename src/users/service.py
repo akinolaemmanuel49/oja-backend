@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.security import hash_password
 from src.core.utils import ALPHANUMERIC, ALPHANUMERIC_LOWER, generate_random_string
+from src.permissions.service import list_user_permissions
 from src.users.schemas import UserCreate
 
 INSERT_TENANT_QUERY = text("""
@@ -191,8 +192,11 @@ async def get_user_by_id_service(user_id: str, db: AsyncSession) -> Dict[str, An
     if not user_row:
         raise ValueError(f"User not found: {user_id}")
 
+    permissions = await list_user_permissions(db, user_id)
+
     result: Dict[str, Any] = {
         "user": dict(user_row),
+        "permissions": permissions,
     }
 
     return result

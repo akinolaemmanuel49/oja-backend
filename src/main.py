@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from asyncpg.exceptions import ForeignKeyViolationError, UniqueViolationError
 from fastapi import Depends, FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -44,6 +45,23 @@ app = FastAPI(
         404: {"description": "Not found"},
         500: {"description": "Internal server error"},
     },
+)
+
+# TODO::Move this to config eventually
+origins = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
+]
+
+# Middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 

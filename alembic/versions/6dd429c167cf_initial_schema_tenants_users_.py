@@ -30,7 +30,7 @@ def upgrade() -> None:
     op.execute("""
         CREATE TABLE tenants (
             id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            slug       TEXT NOT NULL UNIQUE,
+            alias      TEXT NOT NULL UNIQUE,
             name       TEXT NOT NULL UNIQUE,
             owner_id   UUID UNIQUE,
             status     TEXT NOT NULL DEFAULT 'active'

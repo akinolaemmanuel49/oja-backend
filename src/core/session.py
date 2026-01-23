@@ -50,7 +50,8 @@ async def create_session(
         key=SESSION_COOKIE,
         value=token,
         httponly=True,
-        secure=settings.ENVIRONMENT == "production",
+        # secure=settings.ENVIRONMENT == "production",
+        secure=False,
         samesite="lax",
         max_age=int(SESSION_LIFETIME.total_seconds()),
         path="/",
@@ -60,6 +61,7 @@ async def create_session(
 async def get_current_session(db: AsyncSession, request: Request) -> Optional[dict]:
     """Validate session from cookie and return user_id if valid."""
     token = request.cookies.get(SESSION_COOKIE)
+
     if not token:
         return None
 
