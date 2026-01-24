@@ -5,13 +5,53 @@ Handles creation, listing and management of customer-facing storefronts:
 - Soft-delete via status field
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.storefronts.schemas import StorefrontCreate, StorefrontUpdate
+from src.core.responses import PaginatedResponse
+from src.storefronts.schemas import StorefrontCreate, StorefrontOut, StorefrontUpdate
+
+INSERT_STOREFRONT_QUERY = text("""
+    INSERT INTO storefronts (
+        tenant_id, name, slug, domain, status,
+        created_at, updated_at
+    )
+    VALUES (
+        :tenant_id, :name, :slug, :domain, :status,
+        NOW(), NOW()
+    )
+    RETURNING id, tenant_id, name, slug, domain, status, created_at, updated_at
+""")
+
+GET_STOREFRONT_QUERY = text("""
+SELECT id, tenant_id, name, slug, domain, status, created_at, updated_at
+FROM storefronts
+WHERE id = :id AND tenant_id = :tenant_id
+""")
+
+LIST_STOREFRONTS_QUERY = text("""
+SELECT id, tenant_id, name, slug, domain, status, created_at, updated_at
+FROM storefronts
+WHERE tenant_id = :tenant_id
+ORDER BY created_at DESC
+LIMIT :limit OFFSET :offset
+""")
+
+COUNT_STOREFRONTS_QUERY = text("""
+    SELECT COUNT(*)
+    FROM storefronts
+    WHERE tenant_id = :tenant_id
+""")
+
+UPDATE_STOREFRONT_QUERY = text("""
+UPDATE storefronts
+SET status = 'deleted', updated_at = NOW()
+WHERE id = :id AND tenant_id = :tenant_id
+RETURNING id
+""")
 
 
 async def create_storefront_service(
@@ -31,21 +71,10 @@ async def create_storefront_service(
     Raises:
         ValueError: If slug or name already taken
     """
-    query = text("""
-        INSERT INTO storefronts (
-            tenant_id, name, slug, domain, status,
-            created_at, updated_at
-        )
-        VALUES (
-            :tenant_id, :name, :slug, :domain, :status,
-            NOW(), NOW()
-        )
-        RETURNING id, tenant_id, name, slug, domain, status, created_at, updated_at
-    """)
 
     try:
         result = await db.execute(
-            query,
+            INSERT_STOREFRONT_QUERY,
             {
                 "tenant_id": tenant_id,
                 "name": data.name,
@@ -73,7 +102,7 @@ async def create_storefront_service(
 
 async def get_storefront_service(
     db: AsyncSession, storefront_id: str, tenant_id: str
-) -> Optional[Dict[str, Any]]:
+) -> StorefrontOut:
     """
     Retrieve a single storefront by ID (tenant-scoped).
 
@@ -86,45 +115,55 @@ async def get_storefront_service(
         Storefront dictionary or None if not found
     """
     result = await db.execute(
-        text("""
-        SELECT id, tenant_id, name, slug, domain, status, created_at, updated_at
-        FROM storefronts
-        WHERE id = :id AND tenant_id = :tenant_id
-    """),
+        GET_STOREFRONT_QUERY,
         {"id": storefront_id, "tenant_id": tenant_id},
     )
 
     row = result.mappings().first()
-    return dict(row) if row else None
+    if row:
+        return StorefrontOut(**dict(row))
+    raise ValueError("Storefront not found")
 
 
 async def list_storefronts_service(
-    db: AsyncSession, tenant_id: str, limit: int = 20, offset: int = 0
-) -> List[Dict[str, Any]]:
+    db: AsyncSession, tenant_id: str, page: int = 1, page_size: int = 20
+) -> PaginatedResponse[StorefrontOut]:
     """
     List all storefronts belonging to a tenant.
 
     Args:
         db: Database session
         tenant_id: Tenant identifier
-        limit: Pagination limit
-        offset: Pagination offset
+        page: Page number (1-indexed)
+        page_size: Items per page
 
     Returns:
-        List of storefront dictionaries
+        Paginated list of groups storefronts
     """
-    result = await db.execute(
-        text("""
-        SELECT id, tenant_id, name, slug, domain, status, created_at, updated_at
-        FROM storefronts
-        WHERE tenant_id = :tenant_id
-        ORDER BY created_at DESC
-        LIMIT :limit OFFSET :offset
-    """),
-        {"tenant_id": tenant_id, "limit": limit, "offset": offset},
+    offset = (page - 1) * page_size
+
+    # Get storefronts
+    storefronts_result = await db.execute(
+        LIST_STOREFRONTS_QUERY,
+        {"tenant_id": tenant_id, "limit": page_size, "offset": offset},
     )
 
-    return [dict(row) for row in result.mappings()]
+    storefronts_rows = storefronts_result.mappings().all()
+    storefronts = [StorefrontOut(**row) for row in storefronts_rows]
+
+    # Get total count
+    count_result = await db.execute(
+        COUNT_STOREFRONTS_QUERY,
+        {"tenant_id": tenant_id},
+    )
+    total = count_result.scalar_one()
+
+    return PaginatedResponse(
+        data=storefronts,
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 async def update_storefront_service(
@@ -201,12 +240,7 @@ async def delete_storefront_service(
         True if storefront was marked deleted, False if not found
     """
     result = await db.execute(
-        text("""
-        UPDATE storefronts
-        SET status = 'deleted', updated_at = NOW()
-        WHERE id = :id AND tenant_id = :tenant_id
-        RETURNING id
-    """),
+        UPDATE_STOREFRONT_QUERY,
         {"id": storefront_id, "tenant_id": tenant_id},
     )
 

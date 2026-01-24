@@ -17,6 +17,7 @@ from src.permissions.service import (
 permissions_router = APIRouter(prefix="/permissions", tags=["Permissions"])
 
 
+# No need for pagination here
 @permissions_router.get("/me", response_model=list[str])
 async def list_my_permissions(
     db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)

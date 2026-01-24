@@ -80,8 +80,8 @@ async def get_product(
     summary="List all products for the tenant (paginated)",
 )
 async def list_products(
-    limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     current_user: dict = Depends(require_permission("products:read")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -92,8 +92,8 @@ async def list_products(
     return await list_products_service(
         db,
         tenant_id,
-        limit=limit,
-        offset=offset,
+        page,
+        page_size,
         include_variants=False,  # variants omitted by default → use /:id for details
     )
 

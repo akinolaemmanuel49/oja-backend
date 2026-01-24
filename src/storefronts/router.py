@@ -1,6 +1,6 @@
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.dependencies import get_db, require_permission
@@ -55,16 +55,16 @@ async def get_storefront(
 
 @storefront_router.get("/", response_model=List[StorefrontOut])
 async def list_storefronts(
-    limit: int = 20,
-    offset: int = 0,
     current_user: dict = Depends(require_permission("storefronts:read")),
     db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
 ):
     tenant_id = current_user.get("tenant_id")
     if not tenant_id:
         raise HTTPException(403, "No tenant associated with user")
 
-    return await list_storefronts_service(db, tenant_id, limit, offset)
+    return await list_storefronts_service(db, tenant_id, page, page_size)
 
 
 @storefront_router.patch("/{storefront_id}", response_model=StorefrontOut)
