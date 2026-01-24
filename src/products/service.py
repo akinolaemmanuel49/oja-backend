@@ -1,3 +1,11 @@
+"""
+Product catalog service layer.
+Handles CRUD operations for products and their variants:
+- Simple and variable products
+- SKU uniqueness enforcement
+- Optional variant inclusion in read operations
+"""
+
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import text
@@ -13,7 +21,21 @@ from src.products.schemas import (
 async def create_product_service(
     db: AsyncSession, tenant_id: str, data: ProductCreate
 ) -> Dict[str, Any]:
-    """Create a new product + optional variants in one transaction."""
+    """
+    Create a new product (simple or variable) including optional variants in a single transaction.
+
+    Args:
+        db: Database session
+        tenant_id: Tenant identifier
+        data: Product creation payload (including variants if variable)
+
+    Returns:
+        Dictionary containing created product and any variants
+
+    Raises:
+        ValueError: If SKU already exists
+        RuntimeError: On creation failure
+    """
     try:
         # 1. Insert main product
         product_query = text("""
@@ -94,7 +116,18 @@ async def create_product_service(
 async def get_product_service(
     db: AsyncSession, product_id: str, tenant_id: str, include_variants: bool = True
 ) -> Optional[Dict[str, Any]]:
-    """Retrieve single product + optional variants."""
+    """
+    Retrieve a single product with optional variant details.
+
+    Args:
+        db: Database session
+        product_id: Product UUID
+        tenant_id: Tenant scope
+        include_variants: Whether to load variant data
+
+    Returns:
+        Product dictionary or None if not found
+    """
     product_query = text("""
         SELECT id, tenant_id, type, name, description, base_price, sku,
                created_at, updated_at
@@ -130,7 +163,19 @@ async def list_products_service(
     offset: int = 0,
     include_variants: bool = False,
 ) -> List[Dict[str, Any]]:
-    """List all products for the tenant (dashboard use)."""
+    """
+    List products in the tenant with optional variant preloading.
+
+    Args:
+        db: Database session
+        tenant_id: Tenant identifier
+        limit: Maximum number of records
+        offset: Pagination offset
+        include_variants: Whether to eagerly load variants (can be expensive)
+
+    Returns:
+        List of product dictionaries
+    """
     query = text("""
         SELECT id, tenant_id, type, name, description, base_price, sku,
                created_at, updated_at
@@ -164,7 +209,21 @@ async def list_products_service(
 async def update_product_service(
     db: AsyncSession, product_id: str, tenant_id: str, data: ProductUpdate
 ) -> Optional[Dict[str, Any]]:
-    """Partial update of product fields."""
+    """
+    Partially update product fields.
+
+    Args:
+        db: Database session
+        product_id: Product UUID
+        tenant_id: Tenant scope
+        data: Fields to update (partial)
+
+    Returns:
+        Updated product dictionary or None if not found/no changes
+
+    Raises:
+        ValueError: If SKU conflict occurs
+    """
     if not any([data.name, data.description, data.base_price, data.sku]):
         return None
 
@@ -208,7 +267,17 @@ async def update_product_service(
 async def delete_product_service(
     db: AsyncSession, product_id: str, tenant_id: str
 ) -> bool:
-    """Hard delete product + cascade deletes variants (via FK ON DELETE CASCADE)."""
+    """
+    Hard-delete a product (variants cascade via foreign key).
+
+    Args:
+        db: Database session
+        product_id: Product UUID
+        tenant_id: Tenant scope
+
+    Returns:
+        True if product was deleted, False if not found
+    """
     result = await db.execute(
         text("""
             DELETE FROM products

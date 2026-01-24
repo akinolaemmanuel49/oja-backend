@@ -1,14 +1,31 @@
+"""
+Permission resolution and authorization service layer.
+This module handles:
+- Listing effective permissions for a user (direct + group-inherited)
+- Checking if a user has a specific permission (with wildcard support)
+- Centralized tenancy validation across entity types
+"""
+
 from typing import List
 
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def list_user_permissions(db: AsyncSession, user_id: str) -> List[str]:
     """
-    Return all effective permission codes for a user (direct + via groups).
-    Wildcards are resolved to concrete codes (never return '*').
+    Return all effective permission codes for a user (direct assignments + inherited via groups).
+    Wildcards (*) are resolved to concrete permission codes — never returns wildcard strings.
+
+    Args:
+        db: Database session
+        user_id: UUID of the user
+
+    Returns:
+        Sorted list of unique, concrete permission codes the user possesses
+
+    Note:
+        Wildcard resolution happens application-side for performance and flexibility.
     """
     query = text("""
         SELECT DISTINCT p.code
@@ -46,8 +63,15 @@ async def list_user_permissions(db: AsyncSession, user_id: str) -> List[str]:
 
 async def has_permission(db: AsyncSession, user_id: str, required_code: str) -> bool:
     """
-    Check whether user has the required permission.
-    Supports wildcard matching (application-side).
+    Check whether the user has the required permission (supports wildcard matching).
+
+    Args:
+        db: Database session
+        user_id: UUID of the user to check
+        required_code: Permission code to verify (e.g. "orders:read", "products:*")
+
+    Returns:
+        True if user has the permission (directly or via wildcard/group), False otherwise
     """
     user_codes = await list_user_permissions(db, user_id)
     for code in user_codes:
@@ -62,7 +86,20 @@ async def tenancy_check(
     db: AsyncSession, origin_id, origin_type, destination_id, destination_type
 ):
     """
-    Check whether the origin and destination are in the same tenant.
+    Verify that two entities belong to the same tenant (multi-tenancy isolation).
+
+    Args:
+        db: Database session
+        origin_id: ID of the source entity
+        origin_type: Type of source entity ("user", "group", "role")
+        destination_id: ID of the target entity
+        destination_type: Type of target entity ("user", "group", "role")
+
+    Returns:
+        True if both entities are in the same tenant
+
+    Raises:
+        ValueError: If invalid entity type is provided
     """
     match origin_type:
         case "user":
@@ -96,249 +133,3 @@ async def tenancy_check(
     destination_tenant_id = destination_entity.scalar_one()
 
     return origin_tenant_id == destination_tenant_id
-
-
-async def grant_single_permission(
-    db: AsyncSession,
-    target_type: str,  # "user", "group", "role"
-    target_id: str,
-    permission_code: str,
-) -> (
-    bool
-):  # Possibly return error messages here; This might lead to better error messages
-    """
-    Assign a permission to a user/group/role.
-    Returns True if granted, False if already exists or invalid.
-    """
-    try:
-        # Find permission ID
-        perm_result = await db.execute(
-            text("SELECT id FROM permissions WHERE code = :code"),
-            {"code": permission_code},
-        )
-        perm_id = perm_result.scalar()
-        if not perm_id:
-            return False
-
-        # Prevent modifying permissions for root users
-        if target_type == "user":
-            query = text("SELECT id, is_root FROM users WHERE id=:target_id")
-            result = await db.execute(query, {"target_id": target_id})
-            user = result.first()
-            if user and user.is_root:
-                return False
-
-        table_map = {
-            "user": ("user_permissions", "user_id"),
-            "group": ("group_permissions", "group_id"),
-            "role": ("role_permissions", "role_id"),
-        }
-        if target_type not in table_map:
-            return False
-
-        table, id_col = table_map[target_type]
-
-        await db.execute(
-            text(f"""
-            INSERT INTO {table} ({id_col}, permission_id, created_at)
-            VALUES (:target_id, :perm_id, NOW())
-            ON CONFLICT DO NOTHING
-        """),
-            {"target_id": target_id, "perm_id": perm_id},
-        )
-
-        await db.commit()
-        return True
-    except IntegrityError as e:
-        if "user_permissions_user_id_fkey" in str(e):
-            raise ValueError("User or permission does not exist")
-        raise ValueError("Database constraint violation") from e
-    except Exception as e:
-        await db.rollback()
-        raise RuntimeError(f"Failed to grant permission: {e}")
-
-
-async def grant_multiple_permissions(
-    db: AsyncSession, target_type: str, target_id: str, permission_codes: List[str]
-) -> int:
-    """
-    Bulk assign permissions to target.
-    Returns number of successfully granted permissions.
-    """
-    try:
-        table_map = {
-            "user": ("user_permissions", "user_id"),
-            "group": ("group_permissions", "group_id"),
-            "role": ("role_permissions", "role_id"),
-        }
-
-        # Prevent modifying permissions for root users
-        if target_type == "user":
-            query = text("SELECT id, is_root FROM users WHERE id=:target_id")
-            result = await db.execute(query, {"target_id": target_id})
-            user = result.first()
-            if user and user.is_root:
-                return False
-
-        if target_type not in table_map:
-            return 0
-
-        table_name, id_column = table_map[target_type]
-
-        # Fetch valid permission IDs in bulk
-        result = await db.execute(
-            text("SELECT id, code FROM permissions WHERE code = ANY(:codes)"),
-            {"codes": permission_codes},
-        )
-        valid_permissions = {row["code"]: row["id"] for row in result.mappings()}
-
-        if not valid_permissions:
-            return 0
-
-        granted = 0
-
-        for code in permission_codes:
-            perm_id = valid_permissions.get(code)
-            if not perm_id:
-                continue
-
-            await db.execute(
-                text(f"""
-                INSERT INTO {table_name} ({id_column}, permission_id, created_at)
-                VALUES (:target_id, :perm_id, NOW())
-                ON CONFLICT DO NOTHING
-            """),
-                {"target_id": target_id, "perm_id": perm_id},
-            )
-            granted += 1
-
-        await db.commit()
-
-        return granted
-    except IntegrityError as e:
-        if "user_permissions_user_id_fkey" in str(e):
-            raise ValueError("User or permission does not exist")
-        raise ValueError("Database constraint violation") from e
-    except Exception as e:
-        await db.rollback()
-        raise RuntimeError(f"Failed to grant permissions: {e}")
-
-
-async def revoke_single_permission(
-    db: AsyncSession,
-    target_type: str,  # "user", "group", "role"
-    target_id: str,
-    permission_code: str,
-) -> bool:
-    """
-    Revoke a permission from a user/group/role.
-    Returns True if revoked, False if not found or invalid.
-    """
-    try:
-        # Find permission ID
-        perm_result = await db.execute(
-            text("SELECT id FROM permissions WHERE code = :code"),
-            {"code": permission_code},
-        )
-        perm_id = perm_result.scalar()
-        if not perm_id:
-            return False
-
-        # Prevent modifying permissions for root users
-        if target_type == "user":
-            query = text("SELECT id, is_root FROM users WHERE id=:target_id")
-            result = await db.execute(query, {"target_id": target_id})
-            user = result.first()
-            if user and user.is_root:
-                return False
-
-        table_map = {
-            "user": ("user_permissions", "user_id"),
-            "group": ("group_permissions", "group_id"),
-            "role": ("role_permissions", "role_id"),
-        }
-        if target_type not in table_map:
-            return False
-
-        table, id_col = table_map[target_type]
-
-        await db.execute(
-            text(f"""
-            DELETE FROM {table} WHERE {id_col} = :target_id AND permission_id = :perm_id
-        """),
-            {"target_id": target_id, "perm_id": perm_id},
-        )
-
-        await db.commit()
-        return True
-    except IntegrityError as e:
-        if "user_permissions_user_id_fkey" in str(e):
-            raise ValueError("User or permission does not exist")
-        raise ValueError("Database constraint violation") from e
-    except Exception as e:
-        await db.rollback()
-        raise RuntimeError(f"Failed to revoke permission: {e}")
-
-
-async def revoke_multiple_permissions(
-    db: AsyncSession, target_type: str, target_id: str, permission_codes: List[str]
-) -> int:
-    """
-    Revoke permissions from target.
-    Returns number of successfully revoked permissions.
-    """
-    try:
-        table_map = {
-            "user": ("user_permissions", "user_id"),
-            "group": ("group_permissions", "group_id"),
-            "role": ("role_permissions", "role_id"),
-        }
-
-        # Prevent modifying permissions for root users
-        if target_type == "user":
-            query = text("SELECT id, is_root FROM users WHERE id=:target_id")
-            result = await db.execute(query, {"target_id": target_id})
-            user = result.first()
-            if user and user.is_root:
-                return False
-
-        if target_type not in table_map:
-            return 0
-
-        table_name, id_column = table_map[target_type]
-
-        # Fetch valid permission IDs in bulk
-        result = await db.execute(
-            text("SELECT id, code FROM permissions WHERE code = ANY(:codes)"),
-            {"codes": permission_codes},
-        )
-        valid_permissions = {row["code"]: row["id"] for row in result.mappings()}
-
-        if not valid_permissions:
-            return 0
-
-        granted = 0
-
-        for code in permission_codes:
-            perm_id = valid_permissions.get(code)
-            if not perm_id:
-                continue
-
-            await db.execute(
-                text(f"""
-                DELETE FROM {table_name} WHERE {id_column} = :target_id AND permission_id = :perm_id
-            """),
-                {"target_id": target_id, "perm_id": perm_id},
-            )
-            granted += 1
-
-        await db.commit()
-
-        return granted
-    except IntegrityError as e:
-        if "user_permissions_user_id_fkey" in str(e):
-            raise ValueError("User or permission does not exist")
-        raise ValueError("Database constraint violation") from e
-    except Exception as e:
-        await db.rollback()
-        raise RuntimeError(f"Failed to revoke permission: {e}")

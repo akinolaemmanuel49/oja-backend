@@ -1,3 +1,8 @@
+"""
+Authentication core service layer.
+Handles credential verification during login.
+"""
+
 from sqlalchemy import RowMapping, text
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
@@ -12,6 +17,20 @@ LIMIT 1
 
 
 async def login_service(db: AsyncSession, email: str, password: str) -> RowMapping:
+    """
+    Authenticate user credentials and return minimal user data for session creation.
+
+    Args:
+        db: Database session
+        email: User email
+        password: Plaintext password
+
+    Returns:
+        RowMapping with user id and other minimal fields needed for token creation
+
+    Raises:
+        ValueError: On invalid credentials or deleted account
+    """
     result = await db.execute(GET_USER_FOR_LOGIN_QUERY, {"email": email})
 
     user = result.mappings().first()

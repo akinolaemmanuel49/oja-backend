@@ -1,3 +1,11 @@
+"""
+User and tenant provisioning service layer.
+Handles:
+- User creation (with optional new tenant for root users)
+- Tenant bootstrapping
+- User listing with pagination
+"""
+
 from typing import Any, Dict, Optional
 
 from sqlalchemy import text
@@ -92,17 +100,20 @@ async def create_user_service(
     tenant_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Create a new user with hashed password.
+    Create a new user, optionally creating a new tenant for root/super-admin users.
 
-    - If tenant_id is provided → use it (normal user in existing tenant)
-    - If tenant_id is None and is_root=True → create a new tenant atomically
-    - Full transaction: rollback on any failure
+    Args:
+        db: Database session
+        user_in: User creation payload
+        is_root: Whether this is a root/owner user (implies new tenant if tenant_id=None)
+        tenant_id: Existing tenant to place user in (if not creating new tenant)
 
     Returns:
-        {
-            "user": {...},
-            "tenant": {...}  # only if a new tenant was created
-        }
+        Dictionary with "user" and optionally "tenant" keys
+
+    Raises:
+        ValueError: If email already registered
+        RuntimeError: On creation failure
     """
     try:
         hashed_pw = hash_password(user_in.password)
@@ -204,6 +215,19 @@ async def create_user_service(
 
 
 async def get_user_by_id_service(user_id: str, db: AsyncSession) -> Dict[str, Any]:
+    """
+    Retrieve user by ID including effective permissions.
+
+    Args:
+        user_id: User UUID
+        db: Database session
+
+    Returns:
+        Dictionary with "user" and "permissions" keys
+
+    Raises:
+        ValueError: If user not found
+    """
     user_result = await db.execute(READ_USER_QUERY_BY_ID, {"user_id": user_id})
     user_row = user_result.mappings().first()
     if not user_row:
@@ -220,6 +244,19 @@ async def get_user_by_id_service(user_id: str, db: AsyncSession) -> Dict[str, An
 
 
 async def get_user_by_email_service(email: str, db: AsyncSession) -> Dict[str, Any]:
+    """
+    Retrieve basic user information by email.
+
+    Args:
+        email: User's email address
+        db: Database session
+
+    Returns:
+        Dictionary with user data
+
+    Raises:
+        ValueError: If user not found
+    """
     user_result = await db.execute(READ_USER_QUERY_BY_EMAIL, {"email": email})
     user_row = user_result.mappings().first()
     if not user_row:
@@ -238,6 +275,18 @@ async def get_users_service(
     page: int = 1,
     page_size: int = 20,
 ) -> PaginatedResponse:
+    """
+    Paginated list of users in a tenant.
+
+    Args:
+        tenant_id: Tenant identifier
+        db: Database session
+        page: Page number (1-based)
+        page_size: Records per page
+
+    Returns:
+        PaginatedResponse containing UserOut objects
+    """
     offset = (page - 1) * page_size
 
     # Fetch users

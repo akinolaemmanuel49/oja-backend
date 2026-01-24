@@ -2,13 +2,15 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.dependencies import get_current_user, get_db, require_permission
-from src.permissions.schemas import PermissionRequest, PermissionsRequest
-from src.permissions.service import (
+from src.permissions.assignment import (
     grant_multiple_permissions,
     grant_single_permission,
-    list_user_permissions,
     revoke_multiple_permissions,
     revoke_single_permission,
+)
+from src.permissions.schemas import PermissionRequest, PermissionsRequest
+from src.permissions.service import (
+    list_user_permissions,
     tenancy_check,
 )
 

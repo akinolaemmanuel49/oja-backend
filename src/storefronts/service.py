@@ -1,3 +1,10 @@
+"""
+Storefront management service layer.
+Handles creation, listing and management of customer-facing storefronts:
+- Unique slug enforcement
+- Soft-delete via status field
+"""
+
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import text
@@ -10,7 +17,20 @@ from src.storefronts.schemas import StorefrontCreate, StorefrontUpdate
 async def create_storefront_service(
     db: AsyncSession, tenant_id: str, data: StorefrontCreate
 ) -> Dict[str, Any]:
-    """Create a new storefront for a tenant."""
+    """
+    Create a new storefront for a tenant.
+
+    Args:
+        db: Database session
+        tenant_id: Tenant identifier
+        data: Storefront creation data
+
+    Returns:
+        Created storefront dictionary
+
+    Raises:
+        ValueError: If slug or name already taken
+    """
     query = text("""
         INSERT INTO storefronts (
             tenant_id, name, slug, domain, status,
@@ -54,7 +74,17 @@ async def create_storefront_service(
 async def get_storefront_service(
     db: AsyncSession, storefront_id: str, tenant_id: str
 ) -> Optional[Dict[str, Any]]:
-    """Retrieve a single storefront (tenant-scoped)."""
+    """
+    Retrieve a single storefront by ID (tenant-scoped).
+
+    Args:
+        db: Database session
+        storefront_id: Storefront UUID
+        tenant_id: Tenant scope
+
+    Returns:
+        Storefront dictionary or None if not found
+    """
     result = await db.execute(
         text("""
         SELECT id, tenant_id, name, slug, domain, status, created_at, updated_at
@@ -71,7 +101,18 @@ async def get_storefront_service(
 async def list_storefronts_service(
     db: AsyncSession, tenant_id: str, limit: int = 20, offset: int = 0
 ) -> List[Dict[str, Any]]:
-    """List all storefronts for a tenant."""
+    """
+    List all storefronts belonging to a tenant.
+
+    Args:
+        db: Database session
+        tenant_id: Tenant identifier
+        limit: Pagination limit
+        offset: Pagination offset
+
+    Returns:
+        List of storefront dictionaries
+    """
     result = await db.execute(
         text("""
         SELECT id, tenant_id, name, slug, domain, status, created_at, updated_at
@@ -89,7 +130,21 @@ async def list_storefronts_service(
 async def update_storefront_service(
     db: AsyncSession, storefront_id: str, tenant_id: str, data: StorefrontUpdate
 ) -> Optional[Dict[str, Any]]:
-    """Update an existing storefront (tenant-scoped)."""
+    """
+    Partially update storefront properties.
+
+    Args:
+        db: Database session
+        storefront_id: Storefront UUID
+        tenant_id: Tenant scope
+        data: Fields to update
+
+    Returns:
+        Updated storefront or None if no changes/not found
+
+    Raises:
+        ValueError: If slug or name conflict occurs
+    """
     try:
         if not any([data.name, data.slug, data.domain, data.status]):
             return None
@@ -134,7 +189,17 @@ async def update_storefront_service(
 async def delete_storefront_service(
     db: AsyncSession, storefront_id: str, tenant_id: str
 ) -> bool:
-    """Soft-delete a storefront by setting status='deleted'."""
+    """
+    Soft-delete a storefront (sets status = 'deleted').
+
+    Args:
+        db: Database session
+        storefront_id: Storefront UUID
+        tenant_id: Tenant scope
+
+    Returns:
+        True if storefront was marked deleted, False if not found
+    """
     result = await db.execute(
         text("""
         UPDATE storefronts
