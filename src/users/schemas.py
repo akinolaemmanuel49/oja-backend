@@ -55,3 +55,14 @@ class UserWithPermissions(BaseModel):
         from_attributes=True,
         arbitrary_types_allowed=True,
     )
+
+
+class UserUpdate(BaseModel):
+    """Schema for updating user information."""
+
+    email: Optional[EmailStr] = None
+    first_name: Optional[str] = Field(None, min_length=1, max_length=100)
+    last_name: Optional[str] = Field(None, min_length=1, max_length=100)
+
+    class Config:
+        extra = "forbid"  # Prevent extra fields

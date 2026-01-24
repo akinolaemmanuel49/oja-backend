@@ -16,7 +16,7 @@ from src.core.responses import PaginatedResponse
 from src.core.security import hash_password
 from src.core.utils import ALPHANUMERIC, ALPHANUMERIC_LOWER, generate_random_string
 from src.permissions.service import list_user_permissions
-from src.users.schemas import UserCreate, UserOut
+from src.users.schemas import UserCreate, UserOut, UserUpdate
 
 INSERT_TENANT_QUERY = text("""
     INSERT INTO tenants (alias, name, status, created_at, updated_at)
@@ -90,6 +90,41 @@ COUNT_USERS_QUERY_BY_TENANT_ID = text("""
     SELECT COUNT(*)
     FROM users
     WHERE tenant_id = :tenant_id
+""")
+
+UPDATE_USER_QUERY_TEMPLATE = """
+    UPDATE users
+    SET {updates_clause}, updated_at = NOW()
+    WHERE id = :user_id AND tenant_id = :tenant_id
+    RETURNING
+        id,
+        email,
+        first_name,
+        last_name,
+        full_name,
+        is_active,
+        is_root,
+        tenant_id,
+        created_at,
+        updated_at
+"""
+
+GET_USER_FOR_UPDATE_QUERY = text("""
+    SELECT id, email, tenant_id
+    FROM users
+    WHERE id = :user_id AND tenant_id = :tenant_id
+    FOR UPDATE
+""")
+
+SOFT_DELETE_USER_QUERY = text("""
+    UPDATE users
+    SET
+        is_active = FALSE,
+        updated_at = NOW(),
+        deleted_at = NOW()
+    WHERE id = :user_id
+    AND tenant_id = :tenant_id
+    RETURNING id
 """)
 
 
@@ -317,3 +352,178 @@ async def get_users_service(
         page=page,
         page_size=page_size,
     )
+
+
+async def update_user_service(
+    db: AsyncSession,
+    user_id: str,
+    tenant_id: str,
+    update_data: UserUpdate,
+) -> Dict[str, Any]:
+    """
+    Update a user's information.
+
+    Args:
+        db: Database session
+        user_id: User ID to update
+        tenant_id: Tenant ID for authorization
+        update_data: Partial update fields
+
+    Returns:
+        Dictionary with updated user data
+
+    Raises:
+        ValueError: If user not found or email already exists
+        RuntimeError: On update failure
+    """
+    # Validate that there's something to update
+    if not any(
+        [
+            update_data.email is not None,
+            update_data.first_name is not None,
+            update_data.last_name is not None,
+        ]
+    ):
+        raise ValueError("No update fields provided")
+
+    try:
+        # Check if user exists and lock row for update
+        user_check = await db.execute(
+            GET_USER_FOR_UPDATE_QUERY, {"user_id": user_id, "tenant_id": tenant_id}
+        )
+        existing_user = user_check.mappings().first()
+
+        if not existing_user:
+            raise ValueError(f"User not found: {user_id}")
+
+        # Build dynamic update query
+        updates = []
+        params: Dict[str, Any] = {
+            "user_id": user_id,
+            "tenant_id": tenant_id,
+        }
+
+        # Email update
+        if update_data.email is not None:
+            if update_data.email != existing_user["email"]:
+                updates.append("email = :email")
+                params["email"] = update_data.email
+
+        # Name updates
+        if update_data.first_name is not None:
+            updates.append("first_name = :first_name")
+            params["first_name"] = update_data.first_name
+
+        if update_data.last_name is not None:
+            updates.append("last_name = :last_name")
+            params["last_name"] = update_data.last_name
+
+        # Update full_name if either first or last name changes
+        if update_data.first_name is not None or update_data.last_name is not None:
+            first_name = (
+                update_data.first_name
+                if update_data.first_name is not None
+                else existing_user.get("first_name", "")
+            )
+            last_name = (
+                update_data.last_name
+                if update_data.last_name is not None
+                else existing_user.get("last_name", "")
+            )
+            updates.append("full_name = :full_name")
+            params["full_name"] = f"{first_name} {last_name}".strip()
+
+        # If no actual updates after processing (e.g., same email provided)
+        if not updates:
+            # Return current user data without error
+            result = await db.execute(
+                text("""
+                    SELECT id, email, first_name, last_name, full_name,
+                           is_active, is_root, tenant_id, created_at, updated_at
+                    FROM users
+                    WHERE id = :user_id AND tenant_id = :tenant_id
+                """),
+                {"user_id": user_id, "tenant_id": tenant_id},
+            )
+            user_row = result.mappings().first()
+            return {"user": dict(user_row)} if user_row else {}
+
+        # Execute update
+        updates_clause = ", ".join(updates)
+        update_query = text(
+            UPDATE_USER_QUERY_TEMPLATE.format(updates_clause=updates_clause)
+        )
+
+        result = await db.execute(update_query, params)
+        user_row = result.mappings().first()
+
+        if not user_row:
+            raise RuntimeError("Failed to update user")
+
+        await db.commit()
+
+        return {"user": dict(user_row)}
+
+    except IntegrityError as e:
+        await db.rollback()
+        if "users_email_key" in str(e):
+            raise ValueError("Email already registered")
+        raise ValueError("Database constraint violation") from e
+    except ValueError:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise RuntimeError(f"Failed to update user: {str(e)}") from e
+
+
+async def delete_user_service(
+    db: AsyncSession,
+    user_id: str,
+    tenant_id: str,
+):
+    """
+    Delete a user by ID (soft delete)
+
+    Args:
+        db: Database session
+        user_id: User ID to update
+        tenant_id: Tenant ID for authorization
+
+    Raises:
+        ValueError: If user not found
+        RuntimeError: On update failure
+    """
+
+    try:
+        # Check if user exists and lock row for update
+        user_check = await db.execute(
+            GET_USER_FOR_UPDATE_QUERY, {"user_id": user_id, "tenant_id": tenant_id}
+        )
+        existing_user = user_check.mappings().first()
+
+        if not existing_user:
+            raise ValueError(f"User not found: {user_id}")
+
+        # Soft delete user
+        result = await db.execute(
+            SOFT_DELETE_USER_QUERY,
+            {
+                "user_id": user_id,
+                "tenant_id": tenant_id,
+            },
+        )
+
+        await db.commit()
+
+        return result.scalar_one_or_none()
+
+    except IntegrityError as e:
+        await db.rollback()
+        raise ValueError("Database constraint violation") from e
+    except ValueError:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise RuntimeError(f"Failed to delete user: {str(e)}") from e
