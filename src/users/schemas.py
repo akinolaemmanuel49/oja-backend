@@ -1,3 +1,9 @@
+"""
+Pydantic schemas for the user-related operations.
+
+Users are the primary entities in the system, and these schemas define the structure of the user data.
+"""
+
 from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
@@ -6,6 +12,10 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class UserCreate(BaseModel):
+    """
+    Schema for creating a new user.
+    """
+
     email: EmailStr
     password: str = Field(..., min_length=6)
     first_name: str
@@ -13,6 +23,10 @@ class UserCreate(BaseModel):
 
 
 class UserOut(BaseModel):
+    """
+    Schema for representing a user.
+    """
+
     id: UUID
     email: EmailStr
     first_name: str
@@ -30,6 +44,10 @@ class UserOut(BaseModel):
 
 
 class UserWithPermissions(BaseModel):
+    """
+    Schema for representing a user with their permissions.
+    """
+
     user: UserOut
     permissions: List[str]
 

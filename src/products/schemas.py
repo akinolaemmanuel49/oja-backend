@@ -1,3 +1,9 @@
+"""
+Pydantic schemas for product-related operations
+
+Products allow managing products and their variants.
+"""
+
 from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional
@@ -8,6 +14,10 @@ from pydantic import BaseModel, Field, field_validator
 
 # Base schema for shared fields
 class ProductBase(BaseModel):
+    """
+    Schema for shared fields between product creation and update.
+    """
+
     name: str = Field(..., min_length=1, max_length=255, description="Product name")
     description: Optional[str] = Field(
         None, max_length=2000, description="Product description"
@@ -27,6 +37,10 @@ class ProductBase(BaseModel):
 
 # Create schema (input for creation)
 class ProductCreate(ProductBase):
+    """
+    Schema for creating a new product.
+    """
+
     variants: Optional[List["ProductVariantCreate"]] = Field(
         None, description="List of variants for variable products"
     )
@@ -43,6 +57,10 @@ class ProductCreate(ProductBase):
 
 # Update schema (partial updates)
 class ProductUpdate(BaseModel):
+    """
+    Schema for updating an existing product.
+    """
+
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = Field(None, max_length=2000)
     base_price: Optional[Decimal] = Field(None, ge=0)
@@ -51,6 +69,10 @@ class ProductUpdate(BaseModel):
 
 # Output schema (response model, includes DB fields)
 class ProductOut(ProductBase):
+    """
+    Schema for outputting a product.
+    """
+
     id: UUID
     tenant_id: UUID
     created_at: datetime
@@ -63,6 +85,10 @@ class ProductOut(ProductBase):
 
 # Variant schemas (nested under products for variable types)
 class ProductVariantBase(BaseModel):
+    """
+    Base schema for product variants.
+    """
+
     sku: Optional[str] = Field(
         None, min_length=1, max_length=100, description="Variant-specific SKU"
     )
@@ -75,10 +101,18 @@ class ProductVariantBase(BaseModel):
 
 
 class ProductVariantCreate(ProductVariantBase):
+    """
+    Schema for creating a new product variant.
+    """
+
     pass
 
 
 class ProductVariantUpdate(BaseModel):
+    """
+    Schema for updating an existing product variant.
+    """
+
     sku: Optional[str] = None
     price: Optional[Decimal] = None
     stock_quantity: Optional[int] = None
@@ -87,6 +121,10 @@ class ProductVariantUpdate(BaseModel):
 
 
 class ProductVariantOut(ProductVariantBase):
+    """
+    Schema for outputting a product variant.
+    """
+
     id: UUID
     product_id: UUID
     created_at: datetime
@@ -98,6 +136,10 @@ class ProductVariantOut(ProductVariantBase):
 
 # Separate schemas for linking to storefronts (not part of core product CRUD)
 class StorefrontProductLink(BaseModel):
+    """
+    Schema for linking a product to a storefront.
+    """
+
     display_order: int = Field(
         default=0, ge=0, description="Display order in storefront"
     )
@@ -105,5 +147,9 @@ class StorefrontProductLink(BaseModel):
 
 
 class StorefrontProductLinkUpdate(BaseModel):
+    """
+    Schema for updating an existing storefront product link.
+    """
+
     display_order: Optional[int] = None
     is_visible: Optional[bool] = None
