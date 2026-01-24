@@ -19,8 +19,8 @@ from src.permissions.service import list_user_permissions
 from src.users.schemas import UserCreate, UserOut
 
 INSERT_TENANT_QUERY = text("""
-    INSERT INTO tenants (slug, name, status, created_at, updated_at)
-    VALUES (:slug, :name, 'active', NOW(), NOW())
+    INSERT INTO tenants (alias, name, status, created_at, updated_at)
+    VALUES (:alias, :name, 'active', NOW(), NOW())
     RETURNING id
 """)
 
@@ -121,12 +121,12 @@ async def create_user_service(
         new_tenant_id: Optional[str] = None
 
         # Explicit initialization for static analysis
-        slug: Optional[str] = None
+        alias: Optional[str] = None
         name: Optional[str] = None
 
         # Root user case: create tenant first
         if is_root and tenant_id is None:
-            slug = generate_random_string(
+            alias = generate_random_string(
                 pattern="XXXX-XXXX-XXXX",
                 chars=ALPHANUMERIC_LOWER,
             )
@@ -137,7 +137,7 @@ async def create_user_service(
 
             tenant_result = await db.execute(
                 INSERT_TENANT_QUERY,
-                {"slug": slug, "name": name},
+                {"alias": alias, "name": name},
             )
             tenant_row = tenant_result.mappings().first()
             if not tenant_row:
@@ -199,17 +199,19 @@ async def create_user_service(
         if new_tenant_id is not None:
             result["tenant"] = {
                 "id": tenant_id,
-                "slug": slug,
+                "alias": alias,
                 "name": name,
             }
 
         return result
 
     except IntegrityError as e:
+        print(e)
         if "users_email_key" in str(e):
             raise ValueError("Email already registered")
         raise ValueError("Database constraint violation") from e
     except Exception as e:
+        print(e)
         await db.rollback()
         raise RuntimeError(f"User creation failed: {str(e)}") from e
 

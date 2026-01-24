@@ -10,8 +10,8 @@ Endpoints:
 
 Member management:
 - GET    /groups/{id}/members           - List members (requires groups:read)
-- POST   /groups/{id}/members           - Add member (requires groups:update)
-- DELETE /groups/{id}/members/{user_id} - Remove member (requires groups:update)
+- POST   /groups/{id}/members           - Add members (requires groups:update)
+- DELETE /groups/{id}/members           - Remove members (requires groups:update)
 
 Permission management:
 - GET    /groups/{id}/permissions - List permissions (requires groups:read)
@@ -25,27 +25,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.dependencies import get_current_user, get_db, require_permission
 from src.core.responses import PaginatedResponse
 from src.groups.schemas import (
-    AddUserToGroupRequest,
-    GrantPermissionToGroupRequest,
+    AddUsersToGroupRequest,
+    GrantPermissionsToGroupRequest,
     GroupCreate,
     GroupDetailOut,
     GroupMemberOut,
     GroupOut,
     GroupPermissionOut,
     GroupUpdate,
-    RevokePermissionFromGroupRequest,
+    RemoveUsersFromGroupRequest,
+    RevokePermissionsFromGroupRequest,
 )
 from src.groups.service import (
-    add_user_to_group_service,
+    add_users_to_group_service,
     create_group_service,
     delete_group_service,
     get_group_by_id_service,
-    grant_permission_to_group_service,
+    grant_permissions_to_group_service,
     list_group_members_service,
     list_group_permissions_service,
     list_groups_service,
-    remove_user_from_group_service,
-    revoke_permission_from_group_service,
+    remove_users_from_group_service,
+    revoke_permissions_from_group_service,
     update_group_service,
 )
 
@@ -224,33 +225,32 @@ async def list_group_members(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@group_router.post("/{group_id}/members", status_code=201)
+@group_router.post("/{group_id}/members/add", status_code=201)
 async def add_user_to_group(
     group_id: str,
-    request: AddUserToGroupRequest,
+    request: AddUsersToGroupRequest,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
     _=Depends(require_permission("groups:update")),
 ):
     """
-    Add a user to a group.
+    Adds users to a group.
 
     Requires: groups:update permission
 
-    The user will inherit all permissions assigned to this group.
-    Both the user and group must belong to the same tenant.
+    The users will inherit all permissions assigned to this group.
+    Both the users and group must belong to the same tenant.
     """
     tenant_id = current_user["tenant_id"]
+    user_ids = [str(user_id) for user_id in request.user_ids]
 
     try:
-        added = await add_user_to_group_service(
-            db, group_id, str(request.user_id), tenant_id
-        )
+        result = await add_users_to_group_service(db, group_id, user_ids, tenant_id)
 
-        if added:
-            return {"message": "User added to group successfully"}
-        else:
-            return {"message": "User is already in this group"}
+        return {
+            "message": "Group users processed",
+            **result,
+        }
 
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -258,32 +258,34 @@ async def add_user_to_group(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@group_router.delete("/{group_id}/members/{user_id}", status_code=204)
+@group_router.post("/{group_id}/members/remove", status_code=204)
 async def remove_user_from_group(
     group_id: str,
-    user_id: str,
+    request: RemoveUsersFromGroupRequest,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
     _=Depends(require_permission("groups:update")),
 ):
     """
-    Remove a user from a group.
+    Remove users from a group.
 
     Requires: groups:update permission
 
-    The user will lose permissions inherited from this group
+    The users will lose permissions inherited from this group
     (unless they have them assigned directly).
     """
     tenant_id = current_user["tenant_id"]
+    user_ids = [str(user_id) for user_id in request.user_ids]
 
     try:
-        removed = await remove_user_from_group_service(db, group_id, user_id, tenant_id)
+        result = await remove_users_from_group_service(
+            db, group_id, user_ids, tenant_id
+        )
 
-        if not removed:
-            raise HTTPException(
-                status_code=404,
-                detail="User is not a member of this group",
-            )
+        return {
+            "message": "Group users processed",
+            **result,
+        }
 
     except HTTPException:
         raise
@@ -331,36 +333,32 @@ async def list_group_permissions(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@group_router.post("/{group_id}/permissions", status_code=201)
-async def grant_permission_to_group(
+@group_router.post("/{group_id}/permissions/grant", status_code=201)
+async def grant_permissions_to_group(
     group_id: str,
-    request: GrantPermissionToGroupRequest,
+    request: GrantPermissionsToGroupRequest,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
     _=Depends(require_permission("permissions:grant")),
 ):
     """
-    Grant a permission to a group.
+    Grants permissions to a group.
 
     Requires: permissions:grant permission
 
-    All members of the group will inherit this permission.
+    All members of the group will inherit these permissions.
     """
     tenant_id = current_user["tenant_id"]
 
     try:
-        granted = await grant_permission_to_group_service(
-            db, group_id, request.permission_code, tenant_id
+        result = await grant_permissions_to_group_service(
+            db, group_id, request.permission_codes, tenant_id
         )
 
-        if granted:
-            return {
-                "message": f"Permission '{request.permission_code}' granted to group"
-            }
-        else:
-            return {
-                "message": f"Group already has permission '{request.permission_code}'"
-            }
+        return {
+            "message": "Permissions processed",
+            **result,
+        }
 
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -368,33 +366,32 @@ async def grant_permission_to_group(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@group_router.delete("/{group_id}/permissions", status_code=204)
-async def revoke_permission_from_group(
+@group_router.post("/{group_id}/permissions/revoke", status_code=200)
+async def revoke_permissions_from_group(
     group_id: str,
-    request: RevokePermissionFromGroupRequest,
+    request: RevokePermissionsFromGroupRequest,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
     _=Depends(require_permission("permissions:revoke")),
 ):
     """
-    Revoke a permission from a group.
+    Revoke permissions from a group.
 
     Requires: permissions:revoke permission
 
-    Members will lose this permission unless they have it assigned directly.
+    Members will lose these permissions unless they have them assigned directly.
     """
     tenant_id = current_user["tenant_id"]
 
     try:
-        revoked = await revoke_permission_from_group_service(
-            db, group_id, request.permission_code, tenant_id
+        result = await revoke_permissions_from_group_service(
+            db, group_id, request.permission_codes, tenant_id
         )
 
-        if not revoked:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Group does not have permission '{request.permission_code}'",
-            )
+        return {
+            "message": "Permissions processed",
+            **result,
+        }
 
     except HTTPException:
         raise

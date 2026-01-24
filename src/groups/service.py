@@ -8,6 +8,8 @@ This module handles all business logic for groups including:
 - Listing groups and their members
 """
 
+from typing import Any, Dict, List
+
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -86,17 +88,19 @@ GET_GROUP_DETAIL_QUERY = text("""
 """)
 
 # Member management queries
-ADD_USER_TO_GROUP_QUERY = text("""
+ADD_USERS_TO_GROUP_QUERY = text("""
     INSERT INTO user_groups (user_id, group_id, created_at)
-    VALUES (:user_id, :group_id, NOW())
+    SELECT user_id, :group_id, NOW()
+    FROM UNNEST(:user_ids::uuid[]) AS user_id
     ON CONFLICT (user_id, group_id) DO NOTHING
-    RETURNING user_id, group_id, created_at
+    RETURNING user_id
 """)
 
-REMOVE_USER_FROM_GROUP_QUERY = text("""
+REMOVE_USERS_FROM_GROUP_QUERY = text("""
     DELETE FROM user_groups
-    WHERE user_id = :user_id AND group_id = :group_id
-    RETURNING user_id, group_id
+    WHERE group_id = :group_id
+    AND user_id = ANY(:user_ids)
+    RETURNING user_id
 """)
 
 LIST_GROUP_MEMBERS_QUERY = text("""
@@ -122,20 +126,22 @@ COUNT_GROUP_MEMBERS_QUERY = text("""
 """)
 
 # Permission management queries
-GRANT_PERMISSION_TO_GROUP_QUERY = text("""
+GRANT_PERMISSIONS_TO_GROUP_QUERY = text("""
     INSERT INTO group_permissions (group_id, permission_id, created_at)
     SELECT :group_id, p.id, NOW()
     FROM permissions p
-    WHERE p.code = :permission_code
+    WHERE p.code = ANY(:permission_codes)
     ON CONFLICT (group_id, permission_id) DO NOTHING
-    RETURNING group_id, permission_id, created_at
+    RETURNING permission_id
 """)
 
-REVOKE_PERMISSION_FROM_GROUP_QUERY = text("""
+REVOKE_PERMISSIONS_FROM_GROUP_QUERY = text("""
     DELETE FROM group_permissions
     WHERE group_id = :group_id
-    AND permission_id = (SELECT id FROM permissions WHERE code = :permission_code)
-    RETURNING group_id, permission_id
+    AND permission_id IN (
+        SELECT id FROM permissions WHERE code = ANY(:permission_codes)
+    )
+    RETURNING permission_id
 """)
 
 LIST_GROUP_PERMISSIONS_QUERY = text("""
@@ -395,38 +401,33 @@ async def delete_group_service(
 # =============================================================================
 
 
-async def add_user_to_group_service(
+async def add_users_to_group_service(
     db: AsyncSession,
     group_id: str,
-    user_id: str,
+    user_ids: List[str],
     tenant_id: str,
-) -> bool:
+) -> Dict[str, Any]:
     """
-    Add a user to a group.
+    Add users to a group.
 
     Both the user and group must belong to the same tenant.
 
     Args:
         db: Database session
         group_id: Group UUID
-        user_id: User UUID
+        user_ids: User UUIDs
         tenant_id: Tenant ID (for isolation)
 
     Returns:
-        True if user was added, False if already in group
+        Dict with added, skipped, invalid users
 
     Raises:
         ValueError: If user or group not found in tenant
     """
-    try:
-        # Verify user belongs to tenant
-        user_result = await db.execute(
-            VERIFY_USER_IN_TENANT_QUERY,
-            {"user_id": user_id, "tenant_id": tenant_id},
-        )
-        if not user_result.scalar():
-            raise ValueError(f"User {user_id} not found in tenant")
+    if not user_ids:
+        return {"added": [], "skipped": [], "invalid": []}
 
+    try:
         # Verify group belongs to tenant
         group_result = await db.execute(
             GET_GROUP_BY_ID_QUERY,
@@ -435,44 +436,66 @@ async def add_user_to_group_service(
         if not group_result.first():
             raise ValueError(f"Group {group_id} not found")
 
-        # Add user to group
-        result = await db.execute(
-            ADD_USER_TO_GROUP_QUERY,
-            {"user_id": user_id, "group_id": group_id},
+        # Validate users belong to tenant
+        valid_users_result = await db.execute(
+            text("""
+                SELECT id FROM users
+                WHERE id = ANY(:user_ids) AND tenant_id = :tenant_id
+            """),
+            {"user_ids": user_ids, "tenant_id": tenant_id},
         )
-        row = result.mappings().first()
+
+        valid_user_ids = {row[0] for row in valid_users_result.fetchall()}
+        invalid_user_ids = list(set(user_ids) - valid_user_ids)
+
+        if not valid_user_ids:
+            return {"added": [], "skipped": [], "invalid": invalid_user_ids}
+
+        # Insert valid users
+        insert_result = await db.execute(
+            ADD_USERS_TO_GROUP_QUERY,
+            {"group_id": group_id, "user_ids": list(valid_user_ids)},
+        )
+
+        added_ids = [row[0] for row in insert_result.fetchall()]
+        skipped_ids = list(valid_user_ids - set(added_ids))
+
         await db.commit()
 
-        # Return True if inserted, False if already existed (ON CONFLICT DO NOTHING)
-        return row is not None
+        return {
+            "added": added_ids,
+            "skipped": skipped_ids,
+            "invalid": invalid_user_ids,
+        }
 
-    except ValueError:
-        raise
     except Exception as e:
         await db.rollback()
-        raise RuntimeError(f"Failed to add user to group: {str(e)}") from e
+        raise RuntimeError(f"Failed to add users to group: {str(e)}") from e
 
 
-async def remove_user_from_group_service(
+async def remove_users_from_group_service(
     db: AsyncSession,
     group_id: str,
-    user_id: str,
+    user_ids: List[str],
     tenant_id: str,
-) -> bool:
+) -> Dict[str, Any]:
     """
-    Remove a user from a group.
+    Remove users from a group.
 
     Args:
         db: Database session
         group_id: Group UUID
-        user_id: User UUID
+        user_ids: User UUIDs
         tenant_id: Tenant ID (for isolation)
 
     Returns:
-        True if user was removed, False if not in group
+        Dict with removed + not_found
     """
+    if not user_ids:
+        return {"removed": [], "not_found": []}
+
     try:
-        # Verify group belongs to tenant (security check)
+        # Verify group belongs to tenant
         group_result = await db.execute(
             GET_GROUP_BY_ID_QUERY,
             {"group_id": group_id, "tenant_id": tenant_id},
@@ -480,21 +503,24 @@ async def remove_user_from_group_service(
         if not group_result.first():
             raise ValueError(f"Group {group_id} not found")
 
-        # Remove user from group
-        result = await db.execute(
-            REMOVE_USER_FROM_GROUP_QUERY,
-            {"user_id": user_id, "group_id": group_id},
+        delete_result = await db.execute(
+            REMOVE_USERS_FROM_GROUP_QUERY,
+            {"group_id": group_id, "user_ids": user_ids},
         )
-        row = result.mappings().first()
+
+        removed_ids = [row[0] for row in delete_result.fetchall()]
+        not_found_ids = list(set(user_ids) - set(removed_ids))
+
         await db.commit()
 
-        return row is not None
+        return {
+            "removed": removed_ids,
+            "not_found": not_found_ids,
+        }
 
-    except ValueError:
-        raise
     except Exception as e:
         await db.rollback()
-        raise RuntimeError(f"Failed to remove user from group: {str(e)}") from e
+        raise RuntimeError(f"Failed to remove users from group: {str(e)}") from e
 
 
 async def list_group_members_service(
@@ -562,31 +588,34 @@ async def list_group_members_service(
 # =============================================================================
 
 
-async def grant_permission_to_group_service(
+async def grant_permissions_to_group_service(
     db: AsyncSession,
     group_id: str,
-    permission_code: str,
+    permission_codes: List[str],
     tenant_id: str,
-) -> bool:
+) -> Dict[str, Any]:
     """
-    Grant a permission to a group.
+    Grant permissions to a group.
 
-    All members of the group will inherit this permission.
+    All members of the group will inherit these permissions.
 
     Args:
         db: Database session
         group_id: Group UUID
-        permission_code: Permission code (e.g., "users:read")
+        permission_codes: Permission codes (e.g., ["users:read", "users:write"])
         tenant_id: Tenant ID (for isolation)
 
     Returns:
-        True if permission was granted, False if already had it
+        A dictionary with the following keys:
+            - "granted_count": The number of permissions granted
+            - "requested_count": The total number of permissions requested
+            - "already_had": The number of permissions already had
 
     Raises:
         ValueError: If group or permission not found
     """
     try:
-        # Verify group exists in tenant
+        # Verify group exists
         group_result = await db.execute(
             GET_GROUP_BY_ID_QUERY,
             {"group_id": group_id, "tenant_id": tenant_id},
@@ -594,60 +623,68 @@ async def grant_permission_to_group_service(
         if not group_result.first():
             raise ValueError(f"Group {group_id} not found")
 
-        # Grant permission
-        result = await db.execute(
-            GRANT_PERMISSION_TO_GROUP_QUERY,
-            {"group_id": group_id, "permission_code": permission_code},
+        # Validate permissions exist
+        perm_check = await db.execute(
+            text("SELECT code FROM permissions WHERE code = ANY(:codes)"),
+            {"codes": permission_codes},
         )
-        row = result.mappings().first()
+        found_codes = {row.code for row in perm_check.mappings()}
+        missing = set(permission_codes) - found_codes
 
-        if row is None:
-            # Check if permission exists
-            perm_check = await db.execute(
-                text("SELECT id FROM permissions WHERE code = :code"),
-                {"code": permission_code},
-            )
-            if not perm_check.scalar():
-                raise ValueError(f"Permission '{permission_code}' not found")
+        if missing:
+            raise ValueError(f"Permissions not found: {sorted(missing)}")
 
-            # Permission already granted (ON CONFLICT DO NOTHING)
-            return False
+        # Insert permissions
+        result = await db.execute(
+            GRANT_PERMISSIONS_TO_GROUP_QUERY,
+            {
+                "group_id": group_id,
+                "permission_codes": permission_codes,
+            },
+        )
+        inserted = [row.permission_id for row in result.mappings()]
 
         await db.commit()
-        return True
 
-    except ValueError:
-        raise
+        return {
+            "granted_count": len(inserted),
+            "requested_count": len(permission_codes),
+            "already_had": len(permission_codes) - len(inserted),
+        }
+
     except Exception as e:
         await db.rollback()
-        raise RuntimeError(f"Failed to grant permission: {str(e)}") from e
+        raise RuntimeError(f"Bulk grant failed: {str(e)}") from e
 
 
-async def revoke_permission_from_group_service(
+async def revoke_permissions_from_group_service(
     db: AsyncSession,
     group_id: str,
-    permission_code: str,
+    permission_codes: List[str],
     tenant_id: str,
-) -> bool:
+) -> Dict[str, Any]:
     """
-    Revoke a permission from a group.
+    Revoke permissions from a group.
 
-    Members will lose this permission unless they have it assigned directly.
+    Members will lose these permissions unless they have it assigned directly.
 
     Args:
         db: Database session
         group_id: Group UUID
-        permission_code: Permission code (e.g., "users:read")
+        permission_codes: Permission codes (e.g., ["users:read", "users:write"])
         tenant_id: Tenant ID (for isolation)
 
     Returns:
-        True if permission was revoked, False if didn't have it
+        A dictionary with the following keys:
+            - "revoked_count": The number of permissions revoked
+            - "requested_count": The total number of permissions requested
+            - "not_present": The number of permissions not present
 
     Raises:
         ValueError: If group not found
     """
     try:
-        # Verify group exists in tenant
+        # Verify group exists
         group_result = await db.execute(
             GET_GROUP_BY_ID_QUERY,
             {"group_id": group_id, "tenant_id": tenant_id},
@@ -655,21 +692,27 @@ async def revoke_permission_from_group_service(
         if not group_result.first():
             raise ValueError(f"Group {group_id} not found")
 
-        # Revoke permission
+        # Delete permissions
         result = await db.execute(
-            REVOKE_PERMISSION_FROM_GROUP_QUERY,
-            {"group_id": group_id, "permission_code": permission_code},
+            REVOKE_PERMISSIONS_FROM_GROUP_QUERY,
+            {
+                "group_id": group_id,
+                "permission_codes": permission_codes,
+            },
         )
-        row = result.mappings().first()
+        deleted = [row.permission_id for row in result.mappings()]
+
         await db.commit()
 
-        return row is not None
+        return {
+            "revoked_count": len(deleted),
+            "requested_count": len(permission_codes),
+            "not_present": len(permission_codes) - len(deleted),
+        }
 
-    except ValueError:
-        raise
     except Exception as e:
         await db.rollback()
-        raise RuntimeError(f"Failed to revoke permission: {str(e)}") from e
+        raise RuntimeError(f"Bulk revoke failed: {str(e)}") from e
 
 
 async def list_group_permissions_service(

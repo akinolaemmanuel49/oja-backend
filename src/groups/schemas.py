@@ -6,7 +6,7 @@ When a user is added to a group, they inherit all permissions assigned to that g
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -116,41 +116,43 @@ class GroupDetailOut(BaseModel):
     )
 
 
-class AddUserToGroupRequest(BaseModel):
+class AddUsersToGroupRequest(BaseModel):
     """
-    Request schema for adding a user to a group.
-    """
-
-    user_id: UUID
-
-
-class RemoveUserFromGroupRequest(BaseModel):
-    """
-    Request schema for removing a user from a group.
+    Request schema for adding users to a group.
     """
 
-    user_id: UUID
+    user_ids: List[UUID]
 
 
-class GrantPermissionToGroupRequest(BaseModel):
+class RemoveUsersFromGroupRequest(BaseModel):
     """
-    Request schema for granting a permission to a group.
-
-    All members of the group will inherit this permission.
+    Request schema for removing users from a group.
     """
 
-    permission_code: str = Field(
-        ..., description="Permission code to grant (e.g., 'users:read', 'products:*')"
+    user_ids: List[UUID]
+
+
+class GrantPermissionsToGroupRequest(BaseModel):
+    """
+    Request schema for granting permissions to a group.
+
+    All members of the group will inherit these permissions.
+    """
+
+    permission_codes: list[str] = Field(
+        ...,
+        description="List of permission codes to grant (e.g., ['users:read', 'products:*'])",
     )
 
 
-class RevokePermissionFromGroupRequest(BaseModel):
+class RevokePermissionsFromGroupRequest(BaseModel):
     """
-    Request schema for revoking a permission from a group.
+    Request schema for revoking permissions from a group.
 
-    All members of the group will lose this permission (unless they have it directly).
+    All members of the group will lose these permissions (unless they have them directly).
     """
 
-    permission_code: str = Field(
-        ..., description="Permission code to revoke (e.g., 'users:read', 'products:*')"
+    permission_codes: list[str] = Field(
+        ...,
+        description="List of permission codes to revoke (e.g., ['users:read', 'products:*'])",
     )
