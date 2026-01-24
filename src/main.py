@@ -9,8 +9,10 @@ from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.auth.router import auth_router
+from src.core.config import settings
 from src.core.dependencies import get_db
 from src.database.engine import engine
+from src.groups.router import group_router
 from src.permissions.router import permissions_router
 from src.products.router import products_router
 from src.storefronts.router import storefront_router
@@ -47,13 +49,7 @@ app = FastAPI(
     },
 )
 
-# TODO::Move this to config eventually
-origins = [
-    "http://localhost:5173",
-    "http://localhost:5174",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:5174",
-]
+origins = settings.ALLOWED_ORIGINS
 
 # Middleware
 app.add_middleware(
@@ -111,16 +107,18 @@ async def general_exception_handler(request: Request, exc: Exception):
 
 
 # Register routes
-# User routes
-app.include_router(user_router, dependencies=[Depends(get_db)])
 # Auth routes
 app.include_router(auth_router, dependencies=[Depends(get_db)])
+# User routes
+app.include_router(user_router, dependencies=[Depends(get_db)])
 # Permissions routes
 app.include_router(permissions_router, dependencies=[Depends(get_db)])
 # Storefront routes
 app.include_router(storefront_router, dependencies=[Depends(get_db)])
 # Product routes
 app.include_router(products_router, dependencies=[Depends(get_db)])
+# Group routes
+app.include_router(group_router, dependencies=[Depends(get_db)])
 
 
 @app.get("/health")

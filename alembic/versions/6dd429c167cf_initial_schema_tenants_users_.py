@@ -229,7 +229,26 @@ def upgrade() -> None:
     """)
 
     # ---------------------------------------------------------------------------
-    # 14. Others
+    # 14. Sessions
+    # ---------------------------------------------------------------------------
+    op.execute("""
+        CREATE TABLE sessions (
+            id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            token           TEXT NOT NULL UNIQUE,              -- signed session identifier
+            ip_address      TEXT,
+            user_agent      TEXT,
+            expires_at      TIMESTAMPTZ NOT NULL,
+            created_at      TIMESTAMPTZ DEFAULT NOW(),
+            updated_at      TIMESTAMPTZ DEFAULT NOW()
+        );
+    """)
+
+    op.execute("CREATE INDEX idx_sessions_user_id ON sessions(user_id);")
+    op.execute("CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);")
+
+    # ---------------------------------------------------------------------------
+    # 15. Others
     # ---------------------------------------------------------------------------
     op.execute("""
         -- Enforce only one root user per tenant (or globally if tenant_id IS NULL)
@@ -249,6 +268,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
+    op.execute("DROP TABLE IF EXISTS sessions CASCADE;")
     op.execute("DROP TABLE IF EXISTS storefront_products CASCADE;")
     op.execute("DROP TABLE IF EXISTS product_variants CASCADE;")
     op.execute("DROP TABLE IF EXISTS products CASCADE;")

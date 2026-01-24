@@ -1,5 +1,5 @@
 from functools import lru_cache
-from typing import Literal
+from typing import List, Literal
 
 from pydantic import Field, PostgresDsn, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -46,6 +46,15 @@ class Settings(BaseSettings):
         description="The lifetime of a session", default=7
     )
     API_V1_STR: str = "api/v1"
+    ALLOWED_ORIGINS: List[str] = Field(
+        description="Allowed origins for CORS",
+        default=[
+            "http://localhost:5173",
+            "http://localhost:5174",
+            "http://127.0.0.1:5173",
+            "http://127.0.0.1:5174",
+        ],
+    )
 
     @property
     def is_production(self):
