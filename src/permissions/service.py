@@ -11,6 +11,29 @@ from typing import List
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.permissions.schemas import PermissionOut
+
+
+async def list_all_permissions_service(db: AsyncSession):
+    """
+    Return all permissions
+
+    Args:
+        db: Database session
+
+    Returns:
+        Sorted list of unique, concrete permission
+    """
+    query = text("""
+        SELECT id, code, name, resource, action, description, created_at
+        FROM permissions;
+    """)
+    permissions_result = await db.execute(query)
+    permissions_rows = permissions_result.mappings().all()
+    permissions = [PermissionOut(**row) for row in permissions_rows]
+
+    return permissions
+
 
 async def list_user_permissions(db: AsyncSession, user_id: str) -> List[str]:
     """

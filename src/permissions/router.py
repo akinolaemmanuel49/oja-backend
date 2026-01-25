@@ -1,3 +1,5 @@
+from typing import List
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,8 +10,9 @@ from src.permissions.assignment import (
     revoke_multiple_permissions,
     revoke_single_permission,
 )
-from src.permissions.schemas import PermissionRequest, PermissionsRequest
+from src.permissions.schemas import PermissionOut, PermissionRequest, PermissionsRequest
 from src.permissions.service import (
+    list_all_permissions_service,
     list_user_permissions,
     tenancy_check,
 )
@@ -17,8 +20,14 @@ from src.permissions.service import (
 permissions_router = APIRouter(prefix="/permissions", tags=["Permissions"])
 
 
+@permissions_router.get("/list", response_model=List[PermissionOut])
+async def list_all_permissions(db: AsyncSession = Depends(get_db)):
+    """List all permissions"""
+    return await list_all_permissions_service(db)
+
+
 # No need for pagination here
-@permissions_router.get("/me", response_model=list[str])
+@permissions_router.get("/me", response_model=List[str])
 async def list_my_permissions(
     db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)
 ):

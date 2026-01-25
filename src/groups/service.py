@@ -10,7 +10,8 @@ This module handles all business logic for groups including:
 
 from typing import Any, Dict, List
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -90,11 +91,15 @@ GET_GROUP_DETAIL_QUERY = text("""
 # Member management queries
 ADD_USERS_TO_GROUP_QUERY = text("""
     INSERT INTO user_groups (user_id, group_id, created_at)
-    SELECT user_id, :group_id, NOW()
-    FROM UNNEST(:user_ids::uuid[]) AS user_id
+    SELECT u_id, :group_id, NOW()
+    FROM UNNEST(:user_ids) AS u_id
     ON CONFLICT (user_id, group_id) DO NOTHING
     RETURNING user_id
-""")
+""").bindparams(
+    # This is the crucial change: wrapping the UUID in ARRAY
+    bindparam("user_ids", type_=ARRAY(UUID(as_uuid=True))),
+    bindparam("group_id", type_=UUID(as_uuid=True)),
+)
 
 REMOVE_USERS_FROM_GROUP_QUERY = text("""
     DELETE FROM user_groups
