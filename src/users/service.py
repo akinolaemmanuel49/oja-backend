@@ -8,17 +8,17 @@ Handles:
 - Managing user groups (adding/removing)
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from sqlalchemy import text
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql import bindparam
 
 from src.core.responses import PaginatedResponse
 from src.core.security import hash_password
 from src.core.utils import ALPHANUMERIC, ALPHANUMERIC_LOWER, generate_random_string
+from src.groups.schemas import GroupOut
+from src.groups.service import GET_GROUP_BY_ID_QUERY
 from src.permissions.service import list_user_permissions
 from src.users.schemas import UserCreate, UserOut, UserPermissionOut, UserUpdate
 
@@ -182,21 +182,40 @@ REVOKE_PERMISSIONS_FROM_USER_QUERY = text("""
 # Group management queries
 ADD_USER_TO_GROUP_QUERY = text("""
     INSERT INTO user_groups (user_id, group_id, created_at)
-    SELECT u_id, :group_id, NOW()
-    FROM UNNEST(:user_ids) AS u_id
+    VALUES (:user_id, :group_id, NOW())
     ON CONFLICT (user_id, group_id) DO NOTHING
     RETURNING user_id
-""").bindparams(
-    # This is the crucial change: wrapping the UUID in ARRAY
-    bindparam("user_ids", type_=ARRAY(UUID(as_uuid=True))),
-    bindparam("group_id", type_=UUID(as_uuid=True)),
-)
+""")
 
-REMOVE_USERS_FROM_GROUP_QUERY = text("""
+
+REMOVE_USER_FROM_GROUP_QUERY = text("""
     DELETE FROM user_groups
     WHERE group_id = :group_id
     AND user_id = user_id
     RETURNING user_id
+""")
+
+LIST_GROUPS_QUERY = text("""
+    SELECT
+        id,
+        tenant_id,
+        name,
+        description,
+        created_at,
+        updated_at
+    FROM groups
+    WHERE tenant_id = :tenant_id
+    AND id IN (
+        SELECT group_id FROM user_groups WHERE user_id = :user_id
+    )
+    ORDER BY name
+    LIMIT :limit OFFSET :offset
+""")
+
+COUNT_USER_MEMBER_GROUPS_QUERY = text("""
+    SELECT COUNT(*)
+    FROM user_groups
+    WHERE user_id = :user_id
 """)
 
 
@@ -786,3 +805,169 @@ async def revoke_permissions_from_user_service(
     except Exception as e:
         await db.rollback()
         raise RuntimeError(f"Bulk revoke failed: {str(e)}") from e
+
+
+async def add_user_to_group_service(
+    db: AsyncSession,
+    group_id: str,
+    user_id: str,
+    tenant_id: str,
+) -> Literal[True]:
+    """
+    Add a user to a group.
+
+    Both the user and group must belong to the same tenant.
+
+    Args:
+        db: Database session
+        group_id: Group UUID
+        user_id: User UUID
+        tenant_id: Tenant ID (for isolation)
+
+    Returns:
+        True
+
+    Raises:
+        ValueError: If user or group not found in tenant
+    """
+    if not user_id:
+        raise ValueError("User ID is required")
+
+    try:
+        # Verify group belongs to tenant
+        group_result = await db.execute(
+            GET_GROUP_BY_ID_QUERY,
+            {"group_id": group_id, "tenant_id": tenant_id},
+        )
+        if not group_result.first():
+            raise ValueError(f"Group {group_id} not found")
+
+        # Validate user belongs to tenant
+        valid_user_result = await db.execute(
+            text("""
+                SELECT id FROM users
+                WHERE id = :user_id AND tenant_id = :tenant_id
+            """),
+            {"user_id": user_id, "tenant_id": tenant_id},
+        )
+
+        valid_user_id = valid_user_result.scalar_one()
+
+        # Insert valid users
+        await db.execute(
+            ADD_USER_TO_GROUP_QUERY,
+            {"group_id": group_id, "user_id": valid_user_id},
+        )
+
+        await db.commit()
+
+        return True
+
+    except Exception as e:
+        await db.rollback()
+        raise RuntimeError(f"Failed to add users to group: {str(e)}") from e
+
+
+async def remove_user_from_group_service(
+    db: AsyncSession,
+    group_id: str,
+    user_id: str,
+    tenant_id: str,
+) -> bool:
+    """
+    Remove user from a group.
+
+    Args:
+        db: Database session
+        group_id: Group UUID
+        user_id: User UUID
+        tenant_id: Tenant ID (for isolation)
+
+    Returns:
+        Dict with removed + not_found
+    """
+    if not user_id:
+        return False
+
+    try:
+        # Verify group belongs to tenant
+        group_result = await db.execute(
+            GET_GROUP_BY_ID_QUERY,
+            {"group_id": group_id, "tenant_id": tenant_id},
+        )
+        if not group_result.first():
+            raise ValueError(f"Group {group_id} not found")
+
+        await db.execute(
+            REMOVE_USER_FROM_GROUP_QUERY,
+            {"group_id": group_id, "user_id": user_id},
+        )
+
+        await db.commit()
+
+        return True
+
+    except Exception as e:
+        await db.rollback()
+        raise RuntimeError(f"Failed to remove users from group: {str(e)}") from e
+
+
+async def list_user_groups_service(
+    db: AsyncSession,
+    user_id: str,
+    tenant_id: str,
+    page: int = 1,
+    page_size: int = 20,
+) -> PaginatedResponse[GroupOut]:
+    """
+    List groups a user is a member of.
+
+    Args:
+        db: Database session
+        user_id: User UUID
+        tenant_id: Tenant ID (for isolation)
+        page: Page number (1-indexed)
+        page_size: Items per page
+
+    Returns:
+        Paginated list of groups user is a member of
+
+    Raises:
+        ValueError: If user not found
+    """
+    # Verify user exists in tenant
+    user_result = await db.execute(
+        GET_USER_BY_ID_QUERY,
+        {"user_id": user_id, "tenant_id": tenant_id},
+    )
+    if not user_result.first():
+        raise ValueError(f"User {user_id} not found")
+
+    offset = (page - 1) * page_size
+
+    # Get groups user is a member of
+    groups_result = await db.execute(
+        LIST_GROUPS_QUERY,
+        {
+            "user_id": user_id,
+            "tenant_id": tenant_id,
+            "limit": page_size,
+            "offset": offset,
+        },
+    )
+    groups_rows = groups_result.mappings().all()
+    groups = [GroupOut(**row) for row in groups_rows]
+
+    # Get total count
+    count_result = await db.execute(
+        COUNT_USER_MEMBER_GROUPS_QUERY,
+        {"user_id": user_id},
+    )
+    total = count_result.scalar_one()
+
+    return PaginatedResponse[GroupOut](
+        data=groups,
+        total=total,
+        page=page,
+        page_size=page_size,
+    )

@@ -25,8 +25,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.dependencies import get_current_user, get_db, require_permission
 from src.core.responses import PaginatedResponse
+from src.groups.schemas import GroupOut
 from src.users.schemas import (
+    AddUserToGroupRequest,
     GrantPermissionsToUserRequest,
+    RemoveUserFromGroupRequest,
     RevokePermissionsFromUserRequest,
     UserCreate,
     UserOut,
@@ -34,12 +37,15 @@ from src.users.schemas import (
     UserUpdate,
 )
 from src.users.service import (
+    add_user_to_group_service,
     create_user_service,
     delete_user_service,
     get_user_by_id_service,
     get_users_service,
     grant_permissions_to_user_service,
+    list_user_groups_service,
     list_user_permissions_service,
+    remove_user_from_group_service,
     revoke_permissions_from_user_service,
     update_user_service,
 )
@@ -271,6 +277,105 @@ async def revoke_permissions_from_user(
 
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Groups Management
+# =============================================================================
+@user_router.post("/{user_id}/groups", status_code=201)
+async def add_user_to_group(
+    user_id: str,
+    request: AddUserToGroupRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    _=Depends(require_permission("permissions:grant")),
+):
+    """
+    Adds a user to a group.
+
+    Requires: groups:update permission
+
+    Assign a user to a group.
+    """
+    tenant_id = current_user["tenant_id"]
+    group_id = str(request.group_id)
+
+    try:
+        result = await add_user_to_group_service(db, group_id, user_id, tenant_id)
+
+        if result:
+            return {
+                "message": "User added to group",
+            }
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@user_router.delete("/{user_id}/groups", status_code=200)
+async def remove_user_from_group(
+    user_id: str,
+    request: RemoveUserFromGroupRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    _=Depends(require_permission("permissions:revoke")),
+):
+    """
+    Removes a user from a group.
+
+    Requires: groups:update permission
+
+    Removes a user from a group.
+    """
+    tenant_id = current_user["tenant_id"]
+    group_id = str(request.group_id)
+
+    try:
+        result = await remove_user_from_group_service(db, group_id, user_id, tenant_id)
+
+        if result:
+            return {
+                "message": "User removed from group",
+            }
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@user_router.get(
+    "/{user_id}/groups",
+    response_model=PaginatedResponse[GroupOut],
+    status_code=200,
+)
+async def list_user_groups(
+    user_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    _=Depends(require_permission("groups:read")),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    """
+    List all groups that the user is a member of.
+
+    Requires: groups:read permission
+
+    Returns paginated list of groups that the user is a member of.
+    """
+    tenant_id = current_user["tenant_id"]
+
+    try:
+        return await list_user_groups_service(db, user_id, tenant_id, page, page_size)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
