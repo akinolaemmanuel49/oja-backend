@@ -170,10 +170,12 @@ def upgrade() -> None:
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
             slug TEXT NOT NULL UNIQUE,
+            slug_updated_at TIMESTAMPTZ,
             name TEXT NOT NULL,
             domain TEXT,
             status TEXT NOT NULL DEFAULT 'active',
             design_config JSONB,               -- drag-and-drop layout, components, AI-generated config
+            deleted_at TIMESTAMPTZ,
             created_at TIMESTAMPTZ DEFAULT NOW(),
             updated_at TIMESTAMPTZ DEFAULT NOW(),
             UNIQUE (tenant_id, name)

@@ -1,9 +1,8 @@
-from typing import List
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.dependencies import get_db, require_permission
+from src.core.responses import PaginatedResponse
 from src.storefronts.schemas import StorefrontCreate, StorefrontOut, StorefrontUpdate
 from src.storefronts.service import (
     create_storefront_service,
@@ -53,7 +52,7 @@ async def get_storefront(
     return result
 
 
-@storefront_router.get("/", response_model=List[StorefrontOut])
+@storefront_router.get("/", response_model=PaginatedResponse[StorefrontOut])
 async def list_storefronts(
     current_user: dict = Depends(require_permission("storefronts:read")),
     db: AsyncSession = Depends(get_db),

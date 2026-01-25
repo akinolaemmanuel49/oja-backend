@@ -1,10 +1,10 @@
-from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.dependencies import get_db, require_permission
+from src.core.responses import PaginatedResponse
 from src.products.schemas import (
     ProductCreate,
     ProductOut,
@@ -76,7 +76,7 @@ async def get_product(
 
 @products_router.get(
     "/",
-    response_model=List[ProductOut],
+    response_model=PaginatedResponse[ProductOut],
     summary="List all products for the tenant (paginated)",
 )
 async def list_products(

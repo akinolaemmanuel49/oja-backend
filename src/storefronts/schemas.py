@@ -42,8 +42,10 @@ class StorefrontOut(BaseModel):
     tenant_id: UUID
     name: str
     slug: str
+    slug_updated_at: Optional[datetime] = None
     domain: Optional[str]
     status: str
+    deleted_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 

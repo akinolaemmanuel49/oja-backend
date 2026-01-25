@@ -5,6 +5,7 @@ Handles creation, listing and management of customer-facing storefronts:
 - Soft-delete via status field
 """
 
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 from sqlalchemy import text
@@ -27,13 +28,13 @@ INSERT_STOREFRONT_QUERY = text("""
 """)
 
 GET_STOREFRONT_QUERY = text("""
-SELECT id, tenant_id, name, slug, domain, status, created_at, updated_at
+SELECT id, tenant_id, name, slug, slug_updated_at, domain, status, deleted_at, created_at, updated_at
 FROM storefronts
 WHERE id = :id AND tenant_id = :tenant_id
 """)
 
 LIST_STOREFRONTS_QUERY = text("""
-SELECT id, tenant_id, name, slug, domain, status, created_at, updated_at
+SELECT id, tenant_id, name, slug, slug_updated_at, domain, status, deleted_at, created_at, updated_at
 FROM storefronts
 WHERE tenant_id = :tenant_id
 ORDER BY created_at DESC
@@ -48,7 +49,7 @@ COUNT_STOREFRONTS_QUERY = text("""
 
 UPDATE_STOREFRONT_QUERY = text("""
 UPDATE storefronts
-SET status = 'deleted', updated_at = NOW()
+SET status = 'deleted', updated_at = NOW(), deleted_at = NOW()
 WHERE id = :id AND tenant_id = :tenant_id
 RETURNING id
 """)
@@ -169,24 +170,38 @@ async def list_storefronts_service(
 async def update_storefront_service(
     db: AsyncSession, storefront_id: str, tenant_id: str, data: StorefrontUpdate
 ) -> Optional[Dict[str, Any]]:
-    """
-    Partially update storefront properties.
-
-    Args:
-        db: Database session
-        storefront_id: Storefront UUID
-        tenant_id: Tenant scope
-        data: Fields to update
-
-    Returns:
-        Updated storefront or None if no changes/not found
-
-    Raises:
-        ValueError: If slug or name conflict occurs
-    """
     try:
         if not any([data.name, data.slug, data.domain, data.status]):
             return None
+
+        # 1. Handle Slug Change Restriction Logic
+        if data.slug is not None:
+            # Fetch current slug and last update time
+            check_query = text("""
+                SELECT slug, slug_updated_at FROM storefronts
+                WHERE id = :id AND tenant_id = :tenant_id
+            """)
+            current = await db.execute(
+                check_query, {"id": storefront_id, "tenant_id": tenant_id}
+            )
+            row = current.mappings().first()
+
+            if not row:
+                return None
+
+            # Only enforce the 30-day rule if the slug is actually changing
+            if row["slug"] != data.slug:
+                if row["slug_updated_at"] is not None:
+                    # Check if 30 days have passed
+                    # Note: Using database-agnostic comparison or Python side
+                    last_update = row["slug_updated_at"]
+                    if datetime.now(timezone.utc) < last_update + timedelta(days=30):
+                        days_remaining = (
+                            30 - (datetime.now(timezone.utc) - last_update).days
+                        )
+                        raise ValueError(
+                            f"Slug can only be changed once every 30 days. Please wait {days_remaining} more days."
+                        )
 
         updates = []
         params = {"id": storefront_id, "tenant_id": tenant_id}
@@ -194,12 +209,17 @@ async def update_storefront_service(
         if data.name is not None:
             updates.append("name = :name")
             params["name"] = data.name
+
         if data.slug is not None:
             updates.append("slug = :slug")
+            # If the slug is actually different, update the cooldown timer
+            updates.append("slug_updated_at = NOW()")
             params["slug"] = data.slug
+
         if data.domain is not None:
             updates.append("domain = :domain")
             params["domain"] = data.domain
+
         if data.status is not None:
             updates.append("status = :status")
             params["status"] = data.status
@@ -208,18 +228,21 @@ async def update_storefront_service(
             UPDATE storefronts
             SET {", ".join(updates)}, updated_at = NOW()
             WHERE id = :id AND tenant_id = :tenant_id
-            RETURNING id, tenant_id, name, slug, domain, status, created_at, updated_at
+            RETURNING id, tenant_id, name, slug, domain, status, created_at, updated_at, slug_updated_at
         """)
 
         result = await db.execute(query, params)
         row = result.mappings().first()
         return dict(row) if row else None
+
     except IntegrityError as e:
         if "storefronts_slug_key" in str(e):
             raise ValueError("Storefront slug already taken")
         elif "storefronts_tenant_id_name_key" in str(e):
             raise ValueError("Storefront name already taken")
         raise ValueError("Database constraint violation") from e
+    except ValueError:
+        raise  # Re-raise our cooldown error
     except Exception as e:
         await db.rollback()
         raise RuntimeError(f"Failed to update storefront: {str(e)}") from e
