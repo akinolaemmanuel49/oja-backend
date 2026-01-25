@@ -4,19 +4,23 @@ Handles:
 - User creation (with optional new tenant for root users)
 - Tenant bootstrapping
 - User listing with pagination
+- Managing user permissions (granting/revoking)
+- Managing user groups (adding/removing)
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import bindparam
 
 from src.core.responses import PaginatedResponse
 from src.core.security import hash_password
 from src.core.utils import ALPHANUMERIC, ALPHANUMERIC_LOWER, generate_random_string
 from src.permissions.service import list_user_permissions
-from src.users.schemas import UserCreate, UserOut, UserUpdate
+from src.users.schemas import UserCreate, UserOut, UserPermissionOut, UserUpdate
 
 INSERT_TENANT_QUERY = text("""
     INSERT INTO tenants (alias, name, status, created_at, updated_at)
@@ -70,6 +74,7 @@ READ_USER_QUERY_BY_ID = text("""
      FROM users
      WHERE id = :user_id
  """)
+
 
 READ_USER_QUERY_BY_EMAIL = text("""
      SELECT id, email, first_name, last_name, full_name, tenant_id, is_active, is_root, created_at, updated_at
@@ -125,6 +130,73 @@ SOFT_DELETE_USER_QUERY = text("""
     WHERE id = :user_id
     AND tenant_id = :tenant_id
     RETURNING id
+""")
+
+# Permission management queries
+GET_USER_BY_ID_QUERY = text("""
+    SELECT id, email, first_name, last_name, full_name, tenant_id, is_active, is_root, created_at, updated_at
+    FROM users
+    WHERE id = :user_id AND tenant_id = :tenant_id
+""")
+
+LIST_USER_PERMISSIONS_QUERY = text("""
+    SELECT
+        p.id,
+        p.code,
+        p.name,
+        p.resource,
+        p.action,
+        p.description,
+        up.created_at as granted_at
+    FROM permissions p
+    INNER JOIN user_permissions up ON p.id = up.permission_id
+    WHERE up.user_id = :user_id
+    ORDER BY p.resource, p.action
+    LIMIT :limit OFFSET :offset
+""")
+
+COUNT_USER_PERMISSIONS_QUERY = text("""
+    SELECT COUNT(*)
+    FROM user_permissions
+    WHERE user_id = :user_id
+""")
+
+GRANT_PERMISSIONS_TO_USER_QUERY = text("""
+    INSERT INTO user_permissions (user_id, permission_id, created_at)
+    SELECT :user_id, p.id, NOW()
+    FROM permissions p
+    WHERE p.code = ANY(:permission_codes)
+    ON CONFLICT (user_id, permission_id) DO NOTHING
+    RETURNING permission_id
+""")
+
+REVOKE_PERMISSIONS_FROM_USER_QUERY = text("""
+    DELETE FROM user_permissions
+    WHERE user_id = :user_id
+    AND permission_id IN (
+        SELECT id FROM permissions WHERE code = ANY(:permission_codes)
+    )
+    RETURNING permission_id
+""")
+
+# Group management queries
+ADD_USER_TO_GROUP_QUERY = text("""
+    INSERT INTO user_groups (user_id, group_id, created_at)
+    SELECT u_id, :group_id, NOW()
+    FROM UNNEST(:user_ids) AS u_id
+    ON CONFLICT (user_id, group_id) DO NOTHING
+    RETURNING user_id
+""").bindparams(
+    # This is the crucial change: wrapping the UUID in ARRAY
+    bindparam("user_ids", type_=ARRAY(UUID(as_uuid=True))),
+    bindparam("group_id", type_=UUID(as_uuid=True)),
+)
+
+REMOVE_USERS_FROM_GROUP_QUERY = text("""
+    DELETE FROM user_groups
+    WHERE group_id = :group_id
+    AND user_id = user_id
+    RETURNING user_id
 """)
 
 
@@ -527,3 +599,190 @@ async def delete_user_service(
     except Exception as e:
         await db.rollback()
         raise RuntimeError(f"Failed to delete user: {str(e)}") from e
+
+
+async def list_user_permissions_service(
+    db: AsyncSession,
+    user_id: str,
+    tenant_id: str,
+    page: int = 1,
+    page_size: int = 50,
+) -> PaginatedResponse[UserPermissionOut]:
+    """
+    List all permissions assigned to a user.
+
+    Args:
+        db: Database session
+        user_id: User UUID
+        tenant_id: Tenant ID (for isolation)
+        page: Page number (1-indexed)
+        page_size: Items per page
+
+    Returns:
+        Paginated list of user permissions
+
+    Raises:
+        ValueError: If user not found
+    """
+    # Verify user exists in tenant
+    user_result = await db.execute(
+        GET_USER_BY_ID_QUERY,
+        {"user_id": user_id, "tenant_id": tenant_id},
+    )
+    if not user_result.first():
+        raise ValueError(f"User {user_id} not found")
+
+    offset = (page - 1) * page_size
+
+    # Get permissions
+    perms_result = await db.execute(
+        LIST_USER_PERMISSIONS_QUERY,
+        {
+            "user_id": user_id,
+            "limit": page_size,
+            "offset": offset,
+        },
+    )
+    perms_rows = perms_result.mappings().all()
+    permissions = [UserPermissionOut(**row) for row in perms_rows]
+
+    # Get total count
+    count_result = await db.execute(
+        COUNT_USER_PERMISSIONS_QUERY,
+        {"user_id": user_id},
+    )
+    total = count_result.scalar_one()
+
+    return PaginatedResponse[UserPermissionOut](
+        data=permissions,
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+async def grant_permissions_to_user_service(
+    db: AsyncSession,
+    user_id: str,
+    permission_codes: List[str],
+    tenant_id: str,
+) -> Dict[str, Any]:
+    """
+    Grant permissions to a user.
+
+    User will be assigned these permissions.
+
+    Args:
+        db: Database session
+        user_id: User UUID
+        permission_codes: Permission codes (e.g., ["users:read", "users:write"])
+        tenant_id: Tenant ID (for isolation)
+
+    Returns:
+        A dictionary with the following keys:
+            - "granted_count": The number of permissions granted
+            - "requested_count": The total number of permissions requested
+            - "already_had": The number of permissions already had
+
+    Raises:
+        ValueError: If user or permission not found
+    """
+    try:
+        # Verify user exists
+        user_result = await db.execute(
+            GET_USER_BY_ID_QUERY,
+            {"user_id": user_id, "tenant_id": tenant_id},
+        )
+        if not user_result.first():
+            raise ValueError(f"User {user_id} not found")
+
+        # Validate permissions exist
+        perm_check = await db.execute(
+            text("SELECT code FROM permissions WHERE code = ANY(:codes)"),
+            {"codes": permission_codes},
+        )
+        found_codes = {row.code for row in perm_check.mappings()}
+        missing = set(permission_codes) - found_codes
+
+        if missing:
+            raise ValueError(f"Permissions not found: {sorted(missing)}")
+
+        # Insert permissions
+        result = await db.execute(
+            GRANT_PERMISSIONS_TO_USER_QUERY,
+            {
+                "user_id": user_id,
+                "permission_codes": permission_codes,
+            },
+        )
+        inserted = [row.permission_id for row in result.mappings()]
+
+        await db.commit()
+
+        return {
+            "granted_count": len(inserted),
+            "requested_count": len(permission_codes),
+            "already_had": len(permission_codes) - len(inserted),
+        }
+
+    except Exception as e:
+        await db.rollback()
+        raise RuntimeError(f"Bulk grant failed: {str(e)}") from e
+
+
+async def revoke_permissions_from_user_service(
+    db: AsyncSession,
+    user_id: str,
+    permission_codes: List[str],
+    tenant_id: str,
+) -> Dict[str, Any]:
+    """
+    Revoke permissions from a user.
+
+    User will lose these permissions unless they have it assigned as part of a group.
+
+    Args:
+        db: Database session
+        user_id: User UUID
+        permission_codes: Permission codes (e.g., ["users:read", "users:write"])
+        tenant_id: Tenant ID (for isolation)
+
+    Returns:
+        A dictionary with the following keys:
+            - "revoked_count": The number of permissions revoked
+            - "requested_count": The total number of permissions requested
+            - "not_present": The number of permissions not present
+
+    Raises:
+        ValueError: If user not found
+    """
+    try:
+        # Verify user exists
+        user_result = await db.execute(
+            GET_USER_BY_ID_QUERY,
+            {"user_id": user_id, "tenant_id": tenant_id},
+        )
+        if not user_result.first():
+            raise ValueError(f"User {user_id} not found")
+
+        # Delete permissions
+        result = await db.execute(
+            REVOKE_PERMISSIONS_FROM_USER_QUERY,
+            {
+                "user_id": user_id,
+                "permission_codes": permission_codes,
+            },
+        )
+        deleted = [row.permission_id for row in result.mappings()]
+
+        await db.commit()
+
+        return {
+            "revoked_count": len(deleted),
+            "requested_count": len(permission_codes),
+            "not_present": len(permission_codes) - len(deleted),
+        }
+
+    except Exception as e:
+        await db.rollback()
+        raise RuntimeError(f"Bulk revoke failed: {str(e)}") from e

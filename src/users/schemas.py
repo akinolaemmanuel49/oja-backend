@@ -66,3 +66,74 @@ class UserUpdate(BaseModel):
 
     class Config:
         extra = "forbid"  # Prevent extra fields
+
+
+class UserPermissionOut(BaseModel):
+    """
+    Schema for a permission assigned to a user.
+    """
+
+    id: UUID
+    code: str
+    name: str
+    resource: str
+    action: str
+    description: Optional[str]
+    granted_at: datetime  # When it was granted to the user
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        arbitrary_types_allowed=True,
+    )
+
+
+class GrantPermissionsToUserRequest(BaseModel):
+    """
+    Request schema for granting permissions to a user.
+
+    User will be assigned these permissions.
+    """
+
+    permission_codes: list[str] = Field(
+        ...,
+        description="List of permission codes to grant (e.g., ['users:read', 'products:*'])",
+    )
+
+
+class RevokePermissionsFromUserRequest(BaseModel):
+    """
+    Request schema for revoking permissions from a user.
+
+    Users will lose these permissions (unless they have them as part of a group).
+    """
+
+    permission_codes: list[str] = Field(
+        ...,
+        description="List of permission codes to revoke (e.g., ['users:read', 'products:*'])",
+    )
+
+
+class AddUserToGroupRequest(BaseModel):
+    """
+    Request schema for adding a user to a group.
+
+    User will be added to this group.
+    """
+
+    group_id: UUID = Field(
+        ...,
+        description="ID of the group to add the user to",
+    )
+
+
+class RemoveUserFromGroupRequest(BaseModel):
+    """
+    Request schema for removing a user from a group.
+
+    User will be removed from this group.
+    """
+
+    group_id: UUID = Field(
+        ...,
+        description="ID of the group to remove the user from",
+    )

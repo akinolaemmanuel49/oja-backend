@@ -5,7 +5,7 @@ This module handles all business logic for groups including:
 - Creating/updating/deleting groups
 - Managing group membership (adding/removing users)
 - Managing group permissions (granting/revoking)
-- Listing groups and their members
+- Listing groups and their members with pagination
 """
 
 from typing import Any, Dict, List
