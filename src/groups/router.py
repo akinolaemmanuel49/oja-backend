@@ -83,7 +83,9 @@ async def create_group(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@group_router.get("/", response_model=PaginatedResponse[GroupOut], status_code=200)
+@group_router.get(
+    "/", response_model=PaginatedResponse[GroupDetailOut], status_code=200
+)
 async def list_groups(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),

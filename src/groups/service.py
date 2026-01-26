@@ -42,12 +42,24 @@ GET_GROUP_BY_ID_QUERY = text("""
 """)
 
 LIST_GROUPS_QUERY = text("""
-    SELECT id, tenant_id, name, description, created_at, updated_at
-    FROM groups
-    WHERE tenant_id = :tenant_id
-    ORDER BY name ASC
+    SELECT
+        g.id,
+        g.tenant_id,
+        g.name,
+        g.description,
+        g.created_at,
+        g.updated_at,
+        COUNT(DISTINCT ug.user_id) AS member_count,
+        COUNT(DISTINCT gp.permission_id) AS permission_count
+    FROM groups g
+    LEFT JOIN user_groups ug ON ug.group_id = g.id
+    LEFT JOIN group_permissions gp ON gp.group_id = g.id
+    WHERE g.tenant_id = :tenant_id
+    GROUP BY g.id, g.tenant_id, g.name, g.description, g.created_at, g.updated_at
+    ORDER BY g.name ASC
     LIMIT :limit OFFSET :offset
 """)
+
 
 COUNT_GROUPS_QUERY = text("""
     SELECT COUNT(*)
@@ -270,7 +282,7 @@ async def list_groups_service(
     tenant_id: str,
     page: int = 1,
     page_size: int = 20,
-) -> PaginatedResponse[GroupOut]:
+) -> PaginatedResponse[GroupDetailOut]:
     """
     List all groups in the tenant with pagination.
 
@@ -295,7 +307,7 @@ async def list_groups_service(
         },
     )
     groups_rows = groups_result.mappings().all()
-    groups = [GroupOut(**row) for row in groups_rows]
+    groups = [GroupDetailOut(**row) for row in groups_rows]
 
     # Get total count
     count_result = await db.execute(
@@ -304,7 +316,7 @@ async def list_groups_service(
     )
     total = count_result.scalar_one()
 
-    return PaginatedResponse[GroupOut](
+    return PaginatedResponse[GroupDetailOut](
         data=groups,
         total=total,
         page=page,
