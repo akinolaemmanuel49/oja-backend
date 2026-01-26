@@ -444,14 +444,21 @@ async def add_users_to_group_service(
         # Validate users belong to tenant
         valid_users_result = await db.execute(
             text("""
-                SELECT id FROM users
+                SELECT id, is_root FROM users
                 WHERE id = ANY(:user_ids) AND tenant_id = :tenant_id
             """),
             {"user_ids": user_ids, "tenant_id": tenant_id},
         )
 
-        valid_user_ids = {row[0] for row in valid_users_result.fetchall()}
+        rows = valid_users_result.mappings().all()
+
+        valid_user_ids = {row["id"] for row in rows}
         invalid_user_ids = list(set(user_ids) - valid_user_ids)
+
+        root_user_ids = {row["id"] for row in rows if row["is_root"]}
+
+        if root_user_ids:
+            raise ValueError("Root users cannot be added to a group")
 
         if not valid_user_ids:
             return {"added": [], "skipped": [], "invalid": invalid_user_ids}

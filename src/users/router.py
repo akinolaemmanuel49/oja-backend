@@ -286,7 +286,7 @@ async def revoke_permissions_from_user(
 # =============================================================================
 # Groups Management
 # =============================================================================
-@user_router.post("/{user_id}/groups", status_code=201)
+@user_router.post("/{user_id}/groups/add", status_code=201)
 async def add_user_to_group(
     user_id: str,
     request: AddUserToGroupRequest,
@@ -312,13 +312,15 @@ async def add_user_to_group(
                 "message": "User added to group",
             }
 
+    except HTTPException:
+        raise
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@user_router.delete("/{user_id}/groups", status_code=200)
+@user_router.post("/{user_id}/groups/remove", status_code=200)
 async def remove_user_from_group(
     user_id: str,
     request: RemoveUserFromGroupRequest,

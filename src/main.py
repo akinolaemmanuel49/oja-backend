@@ -63,7 +63,7 @@ app.add_middleware(
 
 # Custom exception handler
 @app.exception_handler(IntegrityError)
-async def integrity_error_handler(request: Request, exc: IntegrityError):
+async def integrity_error_handler(_: Request, exc: IntegrityError):
     original_exc = exc.orig
     if isinstance(original_exc, ForeignKeyViolationError):
         detail = "Resource not found"
@@ -84,7 +84,7 @@ async def integrity_error_handler(request: Request, exc: IntegrityError):
 
 
 @app.exception_handler(ValueError)
-async def value_error_handler(request: Request, exc: ValueError):
+async def value_error_handler(_: Request, exc: ValueError):
     if "Invalid credentials" in str(exc):
         return JSONResponse(status_code=401, content={"detail": "Invalid credentials"})
     elif "User is deleted" in str(exc):
@@ -93,7 +93,7 @@ async def value_error_handler(request: Request, exc: ValueError):
 
 
 @app.exception_handler(StarletteHTTPException)
-async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+async def http_exception_handler(_: Request, exc: StarletteHTTPException):
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail},
@@ -102,7 +102,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 
 
 @app.exception_handler(Exception)
-async def general_exception_handler(request: Request, exc: Exception):
+async def general_exception_handler(_: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 

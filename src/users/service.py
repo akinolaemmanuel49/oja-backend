@@ -712,8 +712,14 @@ async def grant_permissions_to_user_service(
             GET_USER_BY_ID_QUERY,
             {"user_id": user_id, "tenant_id": tenant_id},
         )
-        if not user_result.first():
+
+        user_row = user_result.mappings().first()
+
+        if not user_row:
             raise ValueError(f"User {user_id} not found")
+
+        if user_row["is_root"]:
+            raise ValueError("Root users cannot be granted permissions")
 
         # Validate permissions exist
         perm_check = await db.execute(
@@ -845,13 +851,21 @@ async def add_user_to_group_service(
         # Validate user belongs to tenant
         valid_user_result = await db.execute(
             text("""
-                SELECT id FROM users
+                SELECT id, is_root FROM users
                 WHERE id = :user_id AND tenant_id = :tenant_id
             """),
             {"user_id": user_id, "tenant_id": tenant_id},
         )
 
-        valid_user_id = valid_user_result.scalar_one()
+        valid_user = valid_user_result.mappings().first()
+        if valid_user is None:
+            raise ValueError(f"User {user_id} not found")
+
+        is_root = valid_user["is_root"]
+        valid_user_id = valid_user["id"]
+
+        if is_root:
+            raise ValueError("Root user cannot be added to a group")
 
         # Insert valid users
         await db.execute(
