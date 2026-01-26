@@ -182,6 +182,28 @@ def upgrade() -> None:
         );
     """)
 
+    op.execute("""
+        CREATE TABLE storefront_designs (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            storefront_id UUID NOT NULL REFERENCES storefronts(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,                        -- e.g. "Summer 2026", "Draft v3"
+            description TEXT,
+            design_data JSONB NOT NULL,                -- full serialized design (components, layout, etc.)
+            is_current BOOLEAN DEFAULT FALSE,          -- whether this is the active one
+            created_by UUID REFERENCES users(id),      -- who created/saved it
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW(),
+            published_at TIMESTAMPTZ,                  -- when it was made live
+            UNIQUE (storefront_id, name)
+        );
+    """)
+    op.execute(
+        "CREATE INDEX idx_storefront_designs_storefront_id ON storefront_designs(storefront_id);"
+    )
+    op.execute(
+        "CREATE INDEX idx_storefront_designs_is_current ON storefront_designs(is_current) WHERE is_current = TRUE;"
+    )
+
     # ---------------------------------------------------------------------------
     # 11. Products (scoped to storefront and tenant)
     # ---------------------------------------------------------------------------
@@ -193,9 +215,11 @@ def upgrade() -> None:
             name TEXT NOT NULL,
             description TEXT,
             base_price NUMERIC(12,2),
-            sku TEXT UNIQUE,                   -- global SKU for simple products
+            sku TEXT,  -- No global UNIQUE; enforce per-tenant via index
+            image_urls TEXT[] DEFAULT '{}',           -- ordered list of public URLs (Cloudinary, etc.)            -- global SKU for simple products
             created_at TIMESTAMPTZ DEFAULT NOW(),
-            updated_at TIMESTAMPTZ DEFAULT NOW()
+            updated_at TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE (tenant_id, sku)  -- Tenant-scoped SKU uniqueness
         );
     """)
 
@@ -220,13 +244,15 @@ def upgrade() -> None:
         CREATE TABLE product_variants (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-            sku TEXT UNIQUE,                   -- variant-specific SKU
+            sku TEXT,  -- No global UNIQUE; enforce per-tenant via index if needed
             price NUMERIC(12,2),               -- override base price
             stock_quantity INTEGER DEFAULT 0,
             re_order_level INTEGER DEFAULT 0,
             attributes JSONB,                  -- e.g. {"size": "M", "color": "blue"}
+            image_urls TEXT[] DEFAULT '{}',           -- variant-specific images (e.g. color swatch photos)
             created_at TIMESTAMPTZ DEFAULT NOW(),
-            updated_at TIMESTAMPTZ DEFAULT NOW()
+            updated_at TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE (product_id, sku)
         );
     """)
 
@@ -270,6 +296,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
+    op.execute("DROP TABLE IF EXISTS storefront_designs CASCADE;")
     op.execute("DROP TABLE IF EXISTS sessions CASCADE;")
     op.execute("DROP TABLE IF EXISTS storefront_products CASCADE;")
     op.execute("DROP TABLE IF EXISTS product_variants CASCADE;")
