@@ -94,7 +94,7 @@ async def list_products(
         tenant_id,
         page,
         page_size,
-        include_variants=False,  # variants omitted by default → use /:id for details
+        include_variants=True,
     )
 
 

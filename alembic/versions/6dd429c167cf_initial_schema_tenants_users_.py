@@ -173,7 +173,7 @@ def upgrade() -> None:
             slug_updated_at TIMESTAMPTZ,
             name TEXT NOT NULL,
             domain TEXT,
-            status TEXT NOT NULL DEFAULT 'active',
+            status TEXT NOT NULL CHECK (status IN ('active', 'inactive')) DEFAULT 'active',  -- active or inactive
             design_config JSONB,               -- drag-and-drop layout, components, AI-generated config
             deleted_at TIMESTAMPTZ,
             created_at TIMESTAMPTZ DEFAULT NOW(),

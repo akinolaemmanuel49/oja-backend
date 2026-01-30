@@ -19,7 +19,7 @@ class StorefrontCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     slug: str = Field(..., min_length=1, max_length=255, pattern=r"^[a-z0-9-]+$")
     domain: Optional[str] = None
-    status: str = Field(default="active", pattern="^(active|suspended|deleted)$")
+    status: str = Field(default="active", pattern="^(active|inactive)$")
 
 
 class StorefrontUpdate(BaseModel):
