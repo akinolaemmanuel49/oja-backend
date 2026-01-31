@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from src.storefront_products.router import storefront_products_router
 from src.analytics.router import analytics_router
 from src.auth.router import auth_router
 from src.core.config import settings
@@ -122,6 +123,8 @@ app.include_router(products_router, dependencies=[Depends(get_db)])
 app.include_router(group_router, dependencies=[Depends(get_db)])
 # Analytics routes
 app.include_router(analytics_router, dependencies=[Depends(get_db)])
+# Storefront Products routes
+app.include_router(storefront_products_router, dependencies=[Depends(get_db)])
 
 
 @app.get("/health")
