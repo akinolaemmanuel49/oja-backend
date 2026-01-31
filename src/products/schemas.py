@@ -1,130 +1,146 @@
 """
-Pydantic schemas for product-related operations
-
-Products allow managing products and their variants.
+Pydantic schemas for product-related operations.
+Supports simple and variable products with layered variant generation.
 """
 
 from datetime import datetime
 from decimal import Decimal
-from typing import List, Optional
+from typing import Dict, List, Optional, Union
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+# ───────────────────────────────────────────────
+# Base / Shared
+# ───────────────────────────────────────────────
 
 
-# Base schema for shared fields
 class ProductBase(BaseModel):
-    """
-    Schema for shared fields between product creation and update.
-    """
-
-    name: str = Field(..., min_length=1, max_length=255, description="Product name")
-    description: Optional[str] = Field(
-        None, max_length=2000, description="Product description"
-    )
-    type: str = Field(
-        ...,
-        pattern="^(simple|variable)$",
-        description="Product type: simple or variable",
-    )
-    base_price: Optional[Decimal] = Field(
-        None, ge=0, description="Base price for the product"
-    )
-    sku: Optional[str] = Field(
-        None, min_length=1, max_length=100, description="Unique SKU for simple products"
-    )
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = Field(None, max_length=4000)
+    type: str = Field(..., pattern=r"^(simple|variable)$")
 
 
-# Create schema (input for creation)
+class ProductSimpleFields(BaseModel):
+    """Fields that are only meaningful/required for simple products"""
+
+    base_price: Decimal = Field(..., ge=0, description="Required for simple products")
+    sku: str = Field(..., min_length=1, max_length=100, description="Tenant-unique SKU")
+    stock_quantity: int = Field(0, ge=0)
+    re_order_level: int = Field(0, ge=0)
+
+
+class ProductVariantBase(BaseModel):
+    sku: str = Field(..., min_length=1, max_length=100)
+    price: Decimal = Field(..., ge=0)
+    stock_quantity: int = Field(0, ge=0)
+    re_order_level: int = Field(0, ge=0)
+    attributes: Dict[str, str] = Field(
+        ..., description="e.g. {'color': 'Red', 'size': 'M', 'ram': '16GB'}"
+    )
+
+
+# ───────────────────────────────────────────────
+# Creation
+# ───────────────────────────────────────────────
+
+
+class VariantOptionInput(BaseModel):
+    """Used to generate combinations for variable products"""
+
+    options: Dict[str, List[str]] = Field(
+        ..., description="e.g. {'color': ['Red', 'Blue'], 'size': ['S', 'M', 'L']}"
+    )
+    price: Optional[Decimal] = Field(
+        None, ge=0, description="Default price for generated variants"
+    )
+    stock_quantity: int = Field(0, ge=0)
+    re_order_level: int = Field(0, ge=0)
+    sku_prefix: Optional[str] = Field(
+        None, description="Prefix for auto-generated SKUs"
+    )
+
+
 class ProductCreate(ProductBase):
-    """
-    Schema for creating a new product.
-    """
+    # Simple product fields (only used when type == "simple")
+    simple: Optional[ProductSimpleFields] = None
 
-    variants: Optional[List["ProductVariantCreate"]] = Field(
-        None, description="List of variants for variable products"
+    # Variable product fields (only used when type == "variable")
+    variants: Optional[List[ProductVariantBase]] = Field(
+        None, description="Explicit variants (alternative to variant_options)"
+    )
+    variant_options: Optional[VariantOptionInput] = Field(
+        None, description="Generate combinations automatically"
     )
 
-    @field_validator("variants")
-    @classmethod
-    def validate_variants(cls, v, values):
-        if values.get("type") == "variable" and (not v or len(v) == 0):
-            raise ValueError("Variable products must have at least one variant")
-        if values.get("type") == "simple" and v:
-            raise ValueError("Simple products cannot have variants")
-        return v
+    @model_validator(mode="after")
+    def validate_type_compatibility(self):
+        if self.type == "simple":
+            if self.variants or self.variant_options:
+                raise ValueError(
+                    "Simple products cannot have variants or variant_options"
+                )
+            if not self.simple:
+                raise ValueError(
+                    "Simple products require the 'simple' field with price, sku, etc."
+                )
+        else:  # variable
+            if self.simple:
+                raise ValueError("Variable products should not include 'simple' fields")
+            has_variants = bool(self.variants)
+            has_options = bool(self.variant_options)
+            if not (has_variants ^ has_options):  # exactly one
+                raise ValueError(
+                    "Variable products must provide either 'variants' OR 'variant_options'"
+                )
+            if has_variants and self.variants is None:
+                raise ValueError("Variable products must have at least one variant")
+        return self
 
 
-# Update schema (partial updates)
+# ───────────────────────────────────────────────
+# Update (partial + variant management)
+# ───────────────────────────────────────────────
+
+
 class ProductUpdate(BaseModel):
-    """
-    Schema for updating an existing product.
-    """
-
     name: Optional[str] = Field(None, min_length=1, max_length=255)
-    description: Optional[str] = Field(None, max_length=2000)
+    description: Optional[str] = Field(None, max_length=4000)
+    type: Optional[str] = Field(None, pattern=r"^(simple|variable)$")
+
+    # Simple product fields (only applied if type is or becomes simple)
     base_price: Optional[Decimal] = Field(None, ge=0)
     sku: Optional[str] = Field(None, min_length=1, max_length=100)
+    stock_quantity: Optional[int] = Field(None, ge=0)
+    re_order_level: Optional[int] = Field(None, ge=0)
 
-
-# Output schema (response model, includes DB fields)
-class ProductOut(ProductBase):
-    """
-    Schema for outputting a product.
-    """
-
-    id: UUID
-    tenant_id: UUID
-    created_at: datetime
-    updated_at: datetime
-    variants: Optional[List["ProductVariantOut"]] = None  # Nested variants if fetched
-
-    class Config:
-        from_attributes = True
-
-
-# Variant schemas (nested under products for variable types)
-class ProductVariantBase(BaseModel):
-    """
-    Base schema for product variants.
-    """
-
-    sku: Optional[str] = Field(
-        None, min_length=1, max_length=100, description="Variant-specific SKU"
+    # Variant management (only meaningful for variable products)
+    variants_to_add: Optional[List[ProductVariantBase]] = None
+    variants_to_update: Optional[List[Dict[str, Union[str, Decimal, int, Dict]]]] = (
+        Field(
+            None,
+            description="List of dicts: {'id': UUID, 'sku': ..., 'price': ..., ...}",
+        )
     )
-    price: Optional[Decimal] = Field(None, ge=0, description="Variant price override")
-    stock_quantity: int = Field(default=0, ge=0, description="Available stock")
-    re_order_level: int = Field(default=0, ge=0, description="Reorder threshold")
-    attributes: Optional[dict] = Field(
-        None, description="Variant attributes (e.g., {'size': 'M', 'color': 'blue'})"
-    )
+    variants_to_remove: Optional[List[UUID]] = None  # variant IDs to delete
 
 
-class ProductVariantCreate(ProductVariantBase):
-    """
-    Schema for creating a new product variant.
-    """
+@field_validator("variants_to_update", mode="before")
+def normalize_variant_updates(cls, v):
+    if v is None:
+        return None
+    for item in v:
+        if "id" not in item:
+            raise ValueError("Each variant update must include 'id'")
+    return v
 
-    pass
 
-
-class ProductVariantUpdate(BaseModel):
-    """
-    Schema for updating an existing product variant.
-    """
-
-    sku: Optional[str] = None
-    price: Optional[Decimal] = None
-    stock_quantity: Optional[int] = None
-    re_order_level: Optional[int] = None
-    attributes: Optional[dict] = None
+# ───────────────────────────────────────────────
+# Output / Response
+# ───────────────────────────────────────────────
 
 
 class ProductVariantOut(ProductVariantBase):
-    """
-    Schema for outputting a product variant.
-    """
-
     id: UUID
     product_id: UUID
     created_at: datetime
@@ -134,22 +150,35 @@ class ProductVariantOut(ProductVariantBase):
         from_attributes = True
 
 
-# Separate schemas for linking to storefronts (not part of core product CRUD)
-class StorefrontProductLink(BaseModel):
-    """
-    Schema for linking a product to a storefront.
-    """
+class ProductOut(ProductBase):
+    id: UUID
+    tenant_id: UUID
+    created_at: datetime
+    updated_at: datetime
 
-    display_order: int = Field(
-        default=0, ge=0, description="Display order in storefront"
-    )
-    is_visible: bool = Field(default=True, description="Visibility in storefront")
+    # Simple product fields (present only when type == "simple")
+    base_price: Optional[Decimal] = None
+    sku: Optional[str] = None
+    stock_quantity: Optional[int] = None
+    re_order_level: Optional[int] = None
+
+    # Variable product field
+    variants: Optional[List[ProductVariantOut]] = None
+
+    class Config:
+        from_attributes = True
+
+
+# ───────────────────────────────────────────────
+# Storefront linking (unchanged)
+# ───────────────────────────────────────────────
+
+
+class StorefrontProductLink(BaseModel):
+    display_order: int = Field(default=0, ge=0)
+    is_visible: bool = Field(default=True)
 
 
 class StorefrontProductLinkUpdate(BaseModel):
-    """
-    Schema for updating an existing storefront product link.
-    """
-
     display_order: Optional[int] = None
     is_visible: Optional[bool] = None

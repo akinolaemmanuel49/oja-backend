@@ -215,7 +215,10 @@ def upgrade() -> None:
             name TEXT NOT NULL,
             description TEXT,
             base_price NUMERIC(12,2),
+            stock_quantity INTEGER DEFAULT 0,
+            re_order_level INTEGER DEFAULT 0,
             sku TEXT,  -- No global UNIQUE; enforce per-tenant via index
+            main_image_url TEXT DEFAULT NULL,  -- main image URL for the product
             image_urls TEXT[] DEFAULT '{}',           -- ordered list of public URLs (Cloudinary, etc.)            -- global SKU for simple products
             created_at TIMESTAMPTZ DEFAULT NOW(),
             updated_at TIMESTAMPTZ DEFAULT NOW(),
@@ -249,11 +252,19 @@ def upgrade() -> None:
             stock_quantity INTEGER DEFAULT 0,
             re_order_level INTEGER DEFAULT 0,
             attributes JSONB,                  -- e.g. {"size": "M", "color": "blue"}
+            main_image_url TEXT DEFAULT NULL,  -- main image URL for the variant
             image_urls TEXT[] DEFAULT '{}',           -- variant-specific images (e.g. color swatch photos)
             created_at TIMESTAMPTZ DEFAULT NOW(),
             updated_at TIMESTAMPTZ DEFAULT NOW(),
-            UNIQUE (product_id, sku)
+            UNIQUE (product_id, sku),
+            UNIQUE (product_id, attributes)          -- prevent duplicate attribute combinations
         );
+    """)
+
+    op.execute("""
+        CREATE INDEX idx_product_variants_product_id    ON product_variants(product_id);
+        CREATE INDEX idx_product_variants_attributes_gin ON product_variants USING GIN(attributes);
+        CREATE INDEX idx_product_variants_sku           ON product_variants(sku);
     """)
 
     # ---------------------------------------------------------------------------
