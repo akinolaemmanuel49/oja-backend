@@ -56,6 +56,20 @@ class Settings(BaseSettings):
         ],
     )
 
+    # Third party integrations
+    CLOUDINARY_NAME: str = Field(
+        description="Cloudinary cloud name",
+        default="N/A",
+    )
+    CLOUDINARY_API_KEY: str = Field(
+        description="Cloudinary API key",
+        default="N/A",
+    )
+    CLOUDINARY_API_SECRET: str = Field(
+        description="Cloudinary API secret",
+        default="N/A",
+    )
+
     @property
     def is_production(self):
         return self.ENVIRONMENT == "production"

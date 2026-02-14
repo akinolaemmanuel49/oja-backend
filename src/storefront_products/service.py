@@ -52,6 +52,28 @@ GET_STOREFRONT_PRODUCTS_QUERY = text("""
     LIMIT :limit OFFSET :offset;
 """)
 
+PUBLIC_GET_STOREFRONT_PRODUCTS_QUERY = text("""
+    SELECT
+        sp.product_id,
+        sp.display_order,
+        sp.is_visible,
+
+        p.name            AS product_name,
+        p.type            AS product_type,
+        p.description     AS product_description,
+        p.base_price,
+        p.sku,
+        p.main_image_url
+    FROM storefront_products sp
+    INNER JOIN storefronts s ON sp.storefront_id = s.id
+    INNER JOIN products p    ON sp.product_id = p.id
+    WHERE
+        sp.storefront_id = :storefront_id
+        AND sp.is_visible = TRUE
+    ORDER BY sp.display_order ASC, p.name ASC, p.id ASC
+    LIMIT :limit OFFSET :offset;
+""")
+
 GET_PRODUCT_VARIANTS_FOR_PRODUCTS_QUERY = text("""
     SELECT
         pv.id AS id,
@@ -71,9 +93,17 @@ GET_PRODUCT_VARIANTS_FOR_PRODUCTS_QUERY = text("""
 """)
 
 COUNT_STOREFRONT_PRODUCTS_QUERY = text("""
-    SELECT COUNT(*) 
+    SELECT COUNT(*)
     FROM storefront_products
     WHERE storefront_id = :storefront_id
+""")
+
+PUBLIC_COUNT_STOREFRONT_PRODUCTS_QUERY = text("""
+    SELECT COUNT(*)
+    FROM storefront_products
+    WHERE
+        storefront_id = :storefront_id
+        AND is_visible = TRUE
 """)
 
 UPDATE_STOREFRONT_PRODUCT_QUERY = text("""
@@ -424,3 +454,83 @@ async def bulk_add_products_to_storefront_service(
         "total": len(product_ids),
         "errors": errors if errors else None,
     }
+
+
+async def list_storefront_products_public_service(
+    db: AsyncSession,
+    storefront_id: str,
+    page: int = 1,
+    page_size: int = 50,
+) -> PaginatedResponse[StorefrontProductOut]:
+    """
+    List all products in a storefront(public).
+
+    Args:
+        db: Database session
+        storefront_id: Storefront UUID
+        page: Page number (1-indexed)
+        page_size: Items per page
+
+    Returns:
+        Paginated list of products with storefront-specific settings
+
+    Raises:
+        ValueError: If storefront not found
+    """
+    offset = (page - 1) * page_size
+
+    # Fetch paginated products
+    product_result = await db.execute(
+        PUBLIC_GET_STOREFRONT_PRODUCTS_QUERY,
+        {
+            "storefront_id": storefront_id,
+            "limit": page_size,
+            "offset": offset,
+        },
+    )
+
+    product_rows = list(product_result.mappings())
+    if not product_rows:
+        return PaginatedResponse(
+            data=[],
+            total=0,
+            page=page,
+            page_size=page_size,
+        )
+
+    # Build product map
+    products_by_id: dict[UUID, StorefrontProductOut] = {}
+    product_ids: list[UUID] = []
+
+    for row in product_rows:
+        product = StorefrontProductOut(
+            **row,
+            variants=[],
+        )
+        products_by_id[product.product_id] = product
+        product_ids.append(product.product_id)
+
+    # Fetch variants in one query
+    variant_result = await db.execute(
+        GET_PRODUCT_VARIANTS_FOR_PRODUCTS_QUERY,
+        {"product_ids": product_ids},
+    )
+
+    for row in variant_result.mappings():
+        products_by_id[row["product_id"]].variants.append(ProductVariantOut(**row))
+
+    # Total count (product-level)
+    count_result = await db.execute(
+        PUBLIC_COUNT_STOREFRONT_PRODUCTS_QUERY,
+        {
+            "storefront_id": storefront_id,
+        },
+    )
+    total = count_result.scalar_one()
+
+    return PaginatedResponse(
+        data=list(products_by_id.values()),
+        total=total,
+        page=page,
+        page_size=page_size,
+    )

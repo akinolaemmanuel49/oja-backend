@@ -5,7 +5,7 @@ Storefronts allow users to create and manage their own storefronts, which can be
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -45,9 +45,26 @@ class StorefrontOut(BaseModel):
     slug_updated_at: Optional[datetime] = None
     domain: Optional[str]
     status: str
+    design_config: Optional[dict]
     deleted_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class SaveDesignRequest(BaseModel):
+    """
+    Request to save a storefront's design configuration
+    """
+
+    design_config: Dict[str, Any]
+
+
+class DesignConfigResponse(BaseModel):
+    """
+    Response containing the design configuration
+    """
+
+    design_config: Optional[Dict[str, Any]]

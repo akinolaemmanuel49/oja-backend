@@ -2,22 +2,25 @@ from contextlib import asynccontextmanager
 
 from asyncpg.exceptions import ForeignKeyViolationError, UniqueViolationError
 from fastapi import Depends, FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from src.storefront_products.router import storefront_products_router
 from src.analytics.router import analytics_router
 from src.auth.router import auth_router
 from src.core.config import settings
 from src.core.dependencies import get_db
 from src.database.engine import engine
 from src.groups.router import group_router
+from src.middleware.wildcard_cors_middleware import WildcardCORSMiddleware
 from src.permissions.router import permissions_router
 from src.products.router import products_router
-from src.storefronts.router import storefront_router
+from src.storefront_products.router import (
+    storefront_products_public_router,
+    storefront_products_router,
+)
+from src.storefronts.router import storefront_public_router, storefront_router
 from src.users.router import user_router
 
 
@@ -55,7 +58,7 @@ origins = settings.ALLOWED_ORIGINS
 
 # Middleware
 app.add_middleware(
-    CORSMiddleware,
+    WildcardCORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
@@ -125,6 +128,10 @@ app.include_router(group_router, dependencies=[Depends(get_db)])
 app.include_router(analytics_router, dependencies=[Depends(get_db)])
 # Storefront Products routes
 app.include_router(storefront_products_router, dependencies=[Depends(get_db)])
+# Storefront Public routes
+app.include_router(storefront_public_router, dependencies=[Depends(get_db)])
+# Storefront Products Public routes
+app.include_router(storefront_products_public_router, dependencies=[Depends(get_db)])
 
 
 @app.get("/health")

@@ -3,12 +3,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.dependencies import get_db, require_permission
 from src.core.responses import PaginatedResponse
-from src.storefronts.schemas import StorefrontCreate, StorefrontOut, StorefrontUpdate
+from src.storefronts.schemas import (
+    DesignConfigResponse,
+    SaveDesignRequest,
+    StorefrontCreate,
+    StorefrontOut,
+    StorefrontUpdate,
+)
 from src.storefronts.service import (
     create_storefront_service,
     delete_storefront_service,
+    get_design_config_service,
+    get_resolve_slug_and_get_storefront_service,
     get_storefront_service,
     list_storefronts_service,
+    save_design_config_service,
     update_storefront_service,
 )
 
@@ -104,3 +113,68 @@ async def delete_storefront(
     if not success:
         raise HTTPException(status_code=404, detail="Storefront not found")
     return None
+
+
+@storefront_router.put("/{storefront_id}/design", status_code=status.HTTP_200_OK)
+async def save_storefront_design(
+    storefront_id: str,
+    data: SaveDesignRequest,
+    current_user: dict = Depends(require_permission("storefronts:update")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Save the design configuration for a storefront.
+    This stores the complete JSON spec from the designer.
+    """
+    try:
+        tenant_id = current_user.get("tenant_id")
+        if not tenant_id:
+            raise HTTPException(403, "No tenant associated with user")
+
+        await save_design_config_service(
+            db, storefront_id, tenant_id, data.design_config
+        )
+
+        return {"message": "Design saved successfully"}
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save design: {str(e)}")
+
+
+@storefront_router.get("/{storefront_id}/design", response_model=DesignConfigResponse)
+async def get_storefront_design(
+    storefront_id: str,
+    current_user: dict = Depends(require_permission("storefronts:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Retrieve the design configuration for a storefront.
+    """
+    tenant_id = current_user.get("tenant_id")
+    if not tenant_id:
+        raise HTTPException(403, "No tenant associated with user")
+
+    design_config = await get_design_config_service(db, storefront_id, tenant_id)
+
+    return {"design_config": design_config}
+
+
+storefront_public_router = APIRouter(
+    prefix="/storefronts", tags=["Storefronts (Public)"]
+)
+
+
+@storefront_public_router.get(
+    "/resolve/{storefront_slug}",
+    response_model=StorefrontOut,
+)
+async def resolve_slug_and_get_storefront(
+    storefront_slug: str,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await get_resolve_slug_and_get_storefront_service(db, storefront_slug)
+    if not result:
+        raise HTTPException(status_code=404, detail="Store not found")
+    return result

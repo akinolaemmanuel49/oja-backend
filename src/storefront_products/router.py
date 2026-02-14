@@ -19,6 +19,7 @@ from src.storefront_products.schemas import (
 from src.storefront_products.service import (
     add_product_to_storefront_service,
     bulk_add_products_to_storefront_service,
+    list_storefront_products_public_service,
     list_storefront_products_service,
     remove_product_from_storefront_service,
     update_storefront_product_service,
@@ -189,3 +190,25 @@ async def remove_product_from_storefront(
         return None
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+storefront_products_public_router = APIRouter(
+    prefix="/storefronts/{storefront_id}/products",
+    tags=["Storefronts - Products (Public)"],
+)
+
+
+@storefront_products_public_router.get("/public")
+async def get_public_storefront_products(
+    storefront_id: str,
+    db: AsyncSession = Depends(get_db),
+    page: int = 1,
+    page_size: int = 20,
+):
+    """
+    Public endpoint to get visible products for a storefront.
+    No authentication required - used by the storefront app.
+    """
+    return await list_storefront_products_public_service(
+        db, storefront_id, page, page_size
+    )

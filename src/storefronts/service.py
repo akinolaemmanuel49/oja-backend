@@ -5,6 +5,7 @@ Handles creation, listing and management of customer-facing storefronts:
 - Soft-delete via status field
 """
 
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
@@ -28,13 +29,19 @@ INSERT_STOREFRONT_QUERY = text("""
 """)
 
 GET_STOREFRONT_QUERY = text("""
-SELECT id, tenant_id, name, slug, slug_updated_at, domain, status, deleted_at, created_at, updated_at
-FROM storefronts
-WHERE id = :id AND tenant_id = :tenant_id
+    SELECT id, tenant_id, name, slug, slug_updated_at, domain, status, design_config, deleted_at, created_at, updated_at
+    FROM storefronts
+    WHERE id = :id AND tenant_id = :tenant_id
+""")
+
+GET_STOREFRONT_BY_SLUG_QUERY = text("""
+    SELECT id, tenant_id, name, slug, slug_updated_at, domain, status, design_config, deleted_at, created_at, updated_at
+    FROM storefronts
+    WHERE slug = :slug
 """)
 
 LIST_STOREFRONTS_QUERY = text("""
-SELECT id, tenant_id, name, slug, slug_updated_at, domain, status, deleted_at, created_at, updated_at
+SELECT id, tenant_id, name, slug, slug_updated_at, domain, status, design_config, deleted_at, created_at, updated_at
 FROM storefronts
 WHERE tenant_id = :tenant_id
 ORDER BY created_at DESC
@@ -52,6 +59,19 @@ UPDATE storefronts
 SET status = 'deleted', updated_at = NOW(), deleted_at = NOW()
 WHERE id = :id AND tenant_id = :tenant_id
 RETURNING id
+""")
+
+SAVE_DESIGN_CONFIG_QUERY = text("""
+    UPDATE storefronts
+    SET design_config = :design_config, updated_at = NOW()
+    WHERE id = :storefront_id AND tenant_id = :tenant_id
+    RETURNING id
+""")
+
+GET_DESIGN_CONFIG_QUERY = text("""
+    SELECT design_config
+    FROM storefronts
+    WHERE id = :storefront_id AND tenant_id = :tenant_id
 """)
 
 
@@ -126,6 +146,30 @@ async def get_storefront_service(
     raise ValueError("Storefront not found")
 
 
+async def get_resolve_slug_and_get_storefront_service(
+    db: AsyncSession, storefront_slug: str
+) -> StorefrontOut:
+    """
+    Retrieve a single storefront by slug.
+
+    Args:
+        db: Database session
+        storefront_slug: Storefront slug
+
+    Returns:
+        Storefront dictionary or None if not found
+    """
+    result = await db.execute(
+        GET_STOREFRONT_BY_SLUG_QUERY,
+        {"slug": storefront_slug},
+    )
+
+    row = result.mappings().first()
+    if row:
+        return StorefrontOut(**dict(row))
+    raise ValueError("Storefront not found")
+
+
 async def list_storefronts_service(
     db: AsyncSession, tenant_id: str, page: int = 1, page_size: int = 20
 ) -> PaginatedResponse[StorefrontOut]:
@@ -174,7 +218,7 @@ async def update_storefront_service(
         if not any([data.name, data.slug, data.domain, data.status]):
             return None
 
-        # 1. Handle Slug Change Restriction Logic
+        # Handle Slug Change Restriction Logic
         if data.slug is not None:
             # Fetch current slug and last update time
             check_query = text("""
@@ -269,3 +313,62 @@ async def delete_storefront_service(
 
     row = result.scalar_one_or_none()
     return row is not None
+
+
+async def save_design_config_service(
+    db: AsyncSession, storefront_id: str, tenant_id: str, design_config: Dict[str, Any]
+) -> bool:
+    """
+    Save the design configuration for a storefront.
+
+    Args:
+        db: Database session
+        storefront_id: Storefront UUID
+        tenant_id: Tenant scope (for security)
+        design_config: The complete design JSON
+
+    Returns:
+        True if saved successfully
+
+    Raises:
+        ValueError: If storefront not found
+    """
+    result = await db.execute(
+        SAVE_DESIGN_CONFIG_QUERY,
+        {
+            "storefront_id": storefront_id,
+            "tenant_id": tenant_id,
+            "design_config": json.dumps(design_config),
+        },
+    )
+
+    row = result.scalar_one_or_none()
+    if not row:
+        raise ValueError("Storefront not found")
+
+    return True
+
+
+async def get_design_config_service(
+    db: AsyncSession, storefront_id: str, tenant_id: str
+) -> Optional[Dict[str, Any]]:
+    """
+    Retrieve the design configuration for a storefront.
+
+    Args:
+        db: Database session
+        storefront_id: Storefront UUID
+        tenant_id: Tenant scope
+
+    Returns:
+        Design config dict or None
+    """
+    result = await db.execute(
+        GET_DESIGN_CONFIG_QUERY,
+        {"storefront_id": storefront_id, "tenant_id": tenant_id},
+    )
+
+    row = result.mappings().first()
+    if row:
+        return row.get("design_config")
+    return None
