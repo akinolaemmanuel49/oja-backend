@@ -11,11 +11,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
+
 # ───────────────────────────────────────────────
 # Base / Shared
 # ───────────────────────────────────────────────
-
-
 class ProductBase(BaseModel):
     """Base product fields shared across create/update/output schemas."""
 
@@ -60,8 +59,6 @@ class ProductVariantBase(BaseModel):
 # ───────────────────────────────────────────────
 # Creation
 # ───────────────────────────────────────────────
-
-
 class VariantOptionInput(BaseModel):
     """
     Used to generate combinations for variable products via Cartesian product.
@@ -148,8 +145,6 @@ class ProductCreate(ProductBase):
 # ───────────────────────────────────────────────
 # Update (partial + variant management)
 # ───────────────────────────────────────────────
-
-
 class ProductUpdate(BaseModel):
     """
     Partial product update schema.
@@ -201,8 +196,6 @@ class ProductUpdate(BaseModel):
 # ───────────────────────────────────────────────
 # Output / Response
 # ───────────────────────────────────────────────
-
-
 class ProductVariantOut(ProductVariantBase):
     """Variant output schema with database fields."""
 
@@ -239,8 +232,6 @@ class ProductOut(ProductBase):
 # ───────────────────────────────────────────────
 # Storefront linking
 # ───────────────────────────────────────────────
-
-
 class StorefrontProductLink(BaseModel):
     """Schema for linking a product to a storefront."""
 

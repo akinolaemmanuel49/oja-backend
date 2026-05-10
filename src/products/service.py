@@ -30,7 +30,6 @@ from src.products.utils import normalize_attributes, normalize_image_urls
 # ─────────────────────────────────────────────────────────────────────────────
 # SQL Query Definitions
 # ─────────────────────────────────────────────────────────────────────────────
-
 INSERT_PRODUCT_QUERY = text("""
     INSERT INTO products (
         tenant_id, type, name, description, base_price, sku,
@@ -102,11 +101,10 @@ COUNT_PRODUCTS_QUERY = text("""
     WHERE tenant_id = :tenant_id
 """)
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Service Functions
 # ─────────────────────────────────────────────────────────────────────────────
-
-
 async def create_product_service(
     db: AsyncSession,
     tenant_id: str,
