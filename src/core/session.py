@@ -51,8 +51,8 @@ async def create_session(
         value=token,
         httponly=True,
         # secure=settings.ENVIRONMENT == "production",
-        secure=False,
-        samesite="lax",
+        secure=True,
+        samesite="none",
         max_age=int(SESSION_LIFETIME.total_seconds()),
         path="/",
     )
