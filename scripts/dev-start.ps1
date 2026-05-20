@@ -44,7 +44,12 @@ if (-not (Test-Path "src\main.py")) {
 }
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 4. Start FastAPI development server
+# 4. Migrate database
+# ────────────────────────────────────────────────────────────────────────────────
+python -m alembic upgrade head
+
+# ────────────────────────────────────────────────────────────────────────────────
+# 5. Start FastAPI development server
 # ────────────────────────────────────────────────────────────────────────────────
 Write-Host "Starting FastAPI dev server..." -ForegroundColor Cyan
 Write-Host "Entrypoint: src.main:app" -ForegroundColor DarkGray
