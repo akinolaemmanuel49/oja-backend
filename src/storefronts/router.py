@@ -38,6 +38,7 @@ async def create_storefront(
             raise HTTPException(403, "No tenant associated with user")
 
         result = await create_storefront_service(db, tenant_id, data)
+        print("LOUD:", result)
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

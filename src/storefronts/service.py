@@ -25,7 +25,7 @@ INSERT_STOREFRONT_QUERY = text("""
         :tenant_id, :name, :slug, :domain, :status,
         NOW(), NOW()
     )
-    RETURNING id, tenant_id, name, slug, domain, status, created_at, updated_at
+    RETURNING id, tenant_id, name, slug, domain, status, design_config, created_at, updated_at
 """)
 
 GET_STOREFRONT_QUERY = text("""
@@ -272,7 +272,7 @@ async def update_storefront_service(
             UPDATE storefronts
             SET {", ".join(updates)}, updated_at = NOW()
             WHERE id = :id AND tenant_id = :tenant_id
-            RETURNING id, tenant_id, name, slug, domain, status, created_at, updated_at, slug_updated_at
+            RETURNING id, tenant_id, name, slug, domain, status, design_config, created_at, updated_at, slug_updated_at
         """)
 
         result = await db.execute(query, params)
@@ -286,7 +286,7 @@ async def update_storefront_service(
             raise ValueError("Storefront name already taken")
         raise ValueError("Database constraint violation") from e
     except ValueError:
-        raise  # Re-raise our cooldown error
+        raise
     except Exception as e:
         await db.rollback()
         raise RuntimeError(f"Failed to update storefront: {str(e)}") from e

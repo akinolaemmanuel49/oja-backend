@@ -606,6 +606,7 @@ async def update_product_service(
                 "products_sku_key",
                 "product_variants_sku_key",
                 "product_variants_attributes_key",
+                "product_variants_product_id_sku_key",
             ]
         ):
             raise ValueError("SKU or attribute combination already exists")
