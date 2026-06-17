@@ -43,21 +43,3 @@ async def me(
     permissions = result["permissions"]
 
     return UserWithPermissions(user=user, permissions=permissions)
-
-
-@auth_router.get("/test-cookies")
-async def test_cookies(request: Request):
-    """Debug endpoint to check if cookies are being sent"""
-    cookies = dict(request.cookies)
-    headers = {
-        k: v
-        for k, v in request.headers.items()
-        if k.lower() in ["cookie", "origin", "referer"]
-    }
-
-    return {
-        "message": "Cookie test",
-        "cookies_received": cookies,
-        "relevant_headers": headers,
-        # "session_cookie_found": SESSION_COOKIE in cookies,
-    }
